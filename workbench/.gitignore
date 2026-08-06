@@ -1,0 +1,12 @@
+# Local secrets - never commit
+# .env and all per-profile env files (.env.prod, .env.dev, ...)
+.env
+.env.*
+
+# Generated query output
+reports/
+
+# psql history / scratch
+*.history
+*.out
+.tmp/
