@@ -1,8 +1,8 @@
-<!-- Context: project-intelligence/technical | Priority: high | Version: 1.0 | Updated: 2025-01-12 -->
+<!-- Context: project-intelligence/technical | Priority: high | Version: 1.1 | Updated: 2026-08-07 -->
 
 # Technical Domain
 
-> Document the technical foundation, architecture, and key decisions.
+> The technical foundation of the aspaDB workbench: a PostgreSQL-backed produce/fruit business (South Tyrol, Italy) with inventory, sorting, delivery, sales, and CRM domains.
 
 ## Quick Reference
 
@@ -14,46 +14,51 @@
 
 | Layer | Technology | Version | Rationale |
 |-------|-----------|---------|-----------|
-| Language | [e.g., TypeScript] | [Version] | [Why this language] |
-| Framework | [e.g., Node.js] | [Version] | [Why this framework] |
-| Database | [e.g., PostgreSQL] | [Version] | [Why this database] |
-| Infrastructure | [e.g., AWS, Vercel] | [N/A] | [Why this infra] |
-| Key Libraries | [List important ones] | [Versions] | [Why each matters] |
+| Database | PostgreSQL | 12.13 | Core data store; `aspa` schema (85 tables) is the app schema |
+| DB Hosts | Prod `172.20.61.220` / Dev `192.168.100.32` | N/A | Prod is the authoritative source; dev is a Docker container (Debian 11) |
+| Access | `reporter` role (read-only) | N/A | Scoped to `aspa` + `public` schemas; superuser `mkoroschetz` for admin |
+| Tooling | SQL workbench scripts | N/A | `workbench/scripts/run.sh` / `snapshot.sh` with `-e prod\|dev` profiles |
+| Backup | pg_dumpall-style full cluster | N/A | `globals.sql.gz` + per-DB dumps; crontab Feb + June |
 
 ## Architecture Pattern
 
 ```
-Type: [Monolith | Microservices | Serverless | Agent-based | Hybrid]
-Pattern: [Brief description]
-Diagram: [Link to architecture diagram if exists]
+Type: Monolith (database-centric)
+Pattern: Single PostgreSQL instance hosting multiple schemas:
+        aspa (app), public (scratch), tax_reports (tax compliance), winery (secondary business)
+Diagram: See .opencode/context/development/data/aspa/aspa-schema.md
 ```
 
 ### Why This Architecture?
 
-[Explain the business and technical reasons for this architecture choice. What problem does this architecture solve? What were alternatives considered?]
+The business runs on a single PostgreSQL database with schema-level separation. The `aspa` schema holds the core produce business (inventory, sorting, delivery, sales, CRM); `tax_reports` handles Italian tax compliance (corrispettivi, IVA); `winery` is a secondary business line. A read-only `reporter` role enables safe analytics without write access.
 
 ## Project Structure
 
 ```
 [Project Root]
-├── src/                    # Source code
-├── tests/                  # Test files
-├── docs/                   # Documentation
-├── scripts/                # Build/deploy scripts
-└── [Other key directories]
+├── workbench/                # SQL workbench
+│   ├── scripts/              # run.sh, snapshot.sh, lib.sh (env profiles)
+│   ├── schema-analysis/      # tables-overview.sql, indexes.sql, unused-indexes.sql
+│   ├── setup-roles.sql       # reporter role + grants + hardening
+│   └── reports/              # Query output (gitignored)
+├── .opencode/context/        # Project context (data layer, standards)
+└── utilities/                # Backup scripts (pg_backup.sh, pg_restore.sh)
 ```
 
 **Key Directories**:
-- `src/` - Contains all application logic organized by [module/feature/domain]
-- `tests/` - [How tests are organized]
-- `docs/` - [What documentation lives here]
+- `workbench/` - SQL workbench with profile-based env selection (`-e prod|dev`)
+- `.opencode/context/` - Project knowledge: data layer, standards, project intelligence
+- `utilities/` - Backup/restore tooling for the full cluster
 
 ## Key Technical Decisions
 
 | Decision | Rationale | Impact |
 |----------|-----------|--------|
-| [Decision 1] | [Why this choice] | [What it enables] |
-| [Decision 2] | [Why this choice] | [What it enables] |
+| Profile-based env (`-e prod\|dev`) | Separate `.env.prod`/`.env.dev` files over manual edits | Safe switching between hosts |
+| Read-only `reporter` role | Analytics without write risk; `REVOKE CREATE ON public` hardening | Least-privilege access |
+| Full-cluster backup (pg_dumpall) | `globals.sql.gz` (roles) + per-DB dumps | Restore order: globals → postgres → aspadb |
+| Soft-delete convention | `deleted` boolean on most tables | Queries must filter `deleted = false` |
 
 See `decisions-log.md` for full decision history with alternatives.
 
@@ -61,48 +66,51 @@ See `decisions-log.md` for full decision history with alternatives.
 
 | System | Purpose | Protocol | Direction |
 |--------|---------|----------|-----------|
-| [API 1] | [What it does] | [REST/GraphQL/gRPC] | [Inbound/Outbound] |
-| [Database] | [What it stores] | [PostgreSQL/Mongo/etc] | [Internal] |
-| [Service] | [What it provides] | [HTTP/gRPC] | [Outbound] |
+| Production DB | Authoritative data | PostgreSQL 5432 | Internal |
+| Dev DB (Docker) | Restored clone for testing | PostgreSQL 5432 | Internal |
+| Backup scripts | Full cluster backup | pg_dump/pg_restore | Outbound |
+| Reporter role | Analytics/read access | SQL | Inbound |
 
 ## Technical Constraints
 
 | Constraint | Origin | Impact |
 |------------|--------|--------|
-| [Legacy systems] | [Business/Tech] | [What limitation it creates] |
-| [Compliance] | [Regulation] | [What must be followed] |
-| [Performance] | [SLAs] | [What must be met] |
+| Soft-delete convention | App design | Must filter `deleted = false` |
+| `en_US.utf8` locale | Prod cluster | Dev container must use `C.UTF-8` |
+| `pg_restore.sh -a` unimplemented | Script limitation | Full-cluster restore uses direct psql |
+| Backup cadence | Crontab (Feb + June) | Restores may be months stale |
 
 ## Development Environment
 
 ```
-Setup: [Quick setup command or link]
-Requirements: [What developers need installed]
-Local Dev: [How to run locally]
-Testing: [How to run tests]
+Setup: workbench/scripts/run.sh -e prod|dev <query.sql>
+Requirements: psql client, credentials in ~/.bashrc or .env.<profile>
+Local Dev: Dev host 192.168.100.32 (Docker, postgres 12)
+Testing: Run queries against dev profile first
 ```
 
 ## Deployment
 
 ```
-Environment: [Production/Staging/Development]
-Platform: [Where it deploys]
-CI/CD: [Pipeline used]
-Monitoring: [Tools for observability]
+Environment: Production (172.20.61.220) / Development (192.168.100.32)
+Platform: PostgreSQL 12.13 on Linux (prod); Docker container (dev)
+Backup: crontab 6 4 * 2,6 * /mnt/data/aspadata/DB-Backup/pg_backup.sh
+Monitoring: pgagent, grafana_user role present
 ```
 
 ## Onboarding Checklist
 
-- [ ] Know the primary tech stack
-- [ ] Understand the architecture pattern and why it was chosen
-- [ ] Know the key project directories and their purpose
-- [ ] Understand major technical decisions and rationale
-- [ ] Know integration points and dependencies
-- [ ] Be able to set up local development environment
-- [ ] Know how to run tests and deploy
+- [x] Know the primary tech stack (PostgreSQL 12.13, aspa schema)
+- [x] Understand the architecture pattern (single DB, schema separation)
+- [x] Know the key project directories and their purpose
+- [x] Understand major technical decisions and rationale
+- [x] Know integration points and dependencies
+- [x] Be able to set up local development environment
+- [x] Know how to run tests and deploy
 
 ## Related Files
 
 - `business-domain.md` - Why this technical foundation exists
 - `business-tech-bridge.md` - How business needs map to technical solutions
 - `decisions-log.md` - Full decision history with context
+- `../development/data/aspa/aspa-schema.md` - Full schema reference

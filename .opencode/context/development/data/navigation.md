@@ -14,6 +14,9 @@
 data/
 ├── navigation.md
 │
+├── aspa/
+│   └── aspa-schema.md          ✅ Active - aspadb schema reference
+│
 ├── sql-patterns/
 │   ├── postgres-patterns.md   ✅ Active
 │   ├── mysql-patterns.md      (planned)
