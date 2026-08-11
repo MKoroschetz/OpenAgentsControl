@@ -1,5 +1,13 @@
--- setup-roles.sql
--- Create the read-only 'reporter' role for data mining / reporting.
+-- ============================================================
+-- setup-roles.sql - Create the read-only 'reporter' role
+-- **Project**: aspaDB-workbench | **Path**: workbench/setup-roles.sql
+-- **Version**: v1.1.0 | **Last Updated**: 2026-08-11
+-- **Author**: Manfred Koroschetz/AI
+-- **License**: SPDX-License-Identifier: MIT
+--
+-- ## Changelog
+-- - v1.1.0 (2026-08-11): Standard header; reporter hardening (REVOKE CREATE)
+-- - v1.0.0 (2026-08-06): Initial role setup script
 --
 -- HOW TO RUN (as a superuser - e.g. the postgres backup account):
 --
