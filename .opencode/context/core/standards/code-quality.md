@@ -1,10 +1,12 @@
-<!-- Context: standards/code | Priority: critical | Version: 2.0 | Updated: 2025-01-21 -->
+<!-- Context: standards/code | Priority: critical | Version: 2.1 | Updated: 2026-08-11 -->
 # Code Standards
 
 ## Quick Reference
 
 **Core Philosophy**: Modular, Functional, Maintainable
 **Golden Rule**: If you can't easily test it, refactor it
+
+**Version Header (MANDATORY)**: Every code file must carry the standard version header — see `file-headers.md` (Project, Path, Version, Last Updated, Author, License, Changelog).
 
 **Critical Patterns** (use these):
 - ✅ Pure functions (same input = same output, no side effects)

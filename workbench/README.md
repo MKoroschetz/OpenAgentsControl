@@ -1,4 +1,10 @@
 # SQL Workbench
+**Project**: aspaDB-workbench | **Path**: workbench/README.md
+**Version**: v1.0.0 | **Last Updated**: 2026-08-11 | **Author**: Manfred Koroschetz/AI
+**License**: SPDX-License-Identifier: MIT
+
+## Changelog
+- v1.0.0 (2026-08-11): Initial standard header
 
 Local workspace for developing, testing, and running PostgreSQL queries
 against the remote database — for data mining reports and index

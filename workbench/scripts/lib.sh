@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 #
 # lib.sh - Shared helpers for workbench scripts.
+# **Project**: aspaDB-workbench | **Path**: workbench/scripts/lib.sh
+# **Version**: v1.0.0 | **Last Updated**: 2026-08-11 | **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# ## Changelog
+# - v1.0.0 (2026-08-11): Initial standard header
 #
 # Usage (in run.sh / snapshot.sh):
 #   source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

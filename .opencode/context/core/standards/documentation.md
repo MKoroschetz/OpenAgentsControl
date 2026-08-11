@@ -1,10 +1,12 @@
-<!-- Context: standards/docs | Priority: critical | Version: 2.0 | Updated: 2025-01-21 -->
+<!-- Context: standards/docs | Priority: critical | Version: 2.1 | Updated: 2026-08-11 -->
 
 # Documentation Standards
 
 ## Quick Reference
 
 **Golden Rule**: If users ask the same question twice, document it
+
+**Version Header (MANDATORY)**: Every document file must carry the standard version header — see `file-headers.md` (Project, Path, Version, Last Updated, Author, License, Changelog).
 
 **Document** (✅ DO):
 - WHY decisions were made

@@ -1,4 +1,10 @@
 # Index Work
+**Project**: aspaDB-workbench | **Path**: workbench/index-work/README.md
+**Version**: v1.0.0 | **Last Updated**: 2026-08-11 | **Author**: Manfred Koroschetz/AI
+**License**: SPDX-License-Identifier: MIT
+
+## Changelog
+- v1.0.0 (2026-08-11): Initial standard header
 
 This folder is where failing/slow query diagnosis and index changes live.
 

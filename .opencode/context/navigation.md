@@ -29,6 +29,7 @@
 | **Write code** | `core/standards/code-quality.md` |
 | **Write tests** | `core/standards/test-coverage.md` |
 | **Write docs** | `core/standards/documentation.md` |
+| **Create/edit ANY file** | `core/standards/file-headers.md` (mandatory version header) |
 | **Review code** | `core/workflows/code-review.md` |
 | **Delegate task** | `core/workflows/task-delegation-basics.md` |
 | **Add agent** | `openagents-repo/guides/adding-agent.md` |

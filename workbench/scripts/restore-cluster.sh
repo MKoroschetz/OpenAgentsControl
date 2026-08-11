@@ -1,6 +1,13 @@
 #!/bin/bash
 
 # restore-cluster.sh - One-shot disaster recovery / dev transfer for aspaDB
+# **Project**: aspaDB-workbench | **Path**: workbench/scripts/restore-cluster.sh
+# **Version**: v1.1.0 | **Last Updated**: 2026-08-11 | **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# ## Changelog
+# - v1.1.0 (2026-08-11): Overwrite-by-default, order-independent args
+# - v1.0.0 (2026-08-11): Initial standard header
 #
 # Restores a full cluster backup directory (as produced by pg_backup.sh) in the
 # correct order:
@@ -9,21 +16,21 @@
 #   3. every other DB   (aspadb, aspadb-temp, ...)
 #
 # Usage:
-#   restore-cluster.sh <backup-dir> [--drop] [--no-owner] [--no-privileges] [--skip-maintenance] [-c <config>]
+#   restore-cluster.sh <backup-dir> [--no-drop] [--no-owner] [--no-privileges] [--skip-maintenance] [-c <config>]
 #
 #   <backup-dir>      Directory containing globals.sql.gz + *.custom / *.sql.gz dumps
-#   --drop            Drop existing databases before restoring (idempotent re-restore)
+#   --no-drop         Do NOT drop existing databases before restoring (default: drop/overwrite)
 #   --no-owner        Restore without ownership (cross-host: prod -> dev)
 #   --no-privileges   Restore without privileges (cross-host: prod -> dev)
 #   --skip-maintenance  Skip the ANALYZE/VACUUM pass at the end
 #   -c <config>       Config file for pg_restore.sh (host/user/passfile). Default: pg_backup.config
 #
 # Examples:
-#   # Disaster recovery on the same host (roles + all DBs)
-#   ./restore-cluster.sh /mnt/data/aspadata/DB-Backup/2026-06-30/ --drop
+#   # Disaster recovery on the same host (roles + all DBs, overwrites existing)
+#   ./restore-cluster.sh /mnt/data/aspadata/DB-Backup/2026-06-30/
 #
-#   # Transfer to dev (no roles/owners from prod)
-#   ./restore-cluster.sh /mnt/data/aspadata/DB-Backup/2026-06-30/ --drop --no-owner --no-privileges
+#   # Transfer to dev (no roles/owners from prod, overwrites existing)
+#   ./restore-cluster.sh /mnt/data/aspadata/DB-Backup/2026-06-30/ --no-owner --no-privileges
 #
 # Exit codes: 0 = success, 1 = restore failure, 2 = usage error
 
@@ -37,27 +44,25 @@ EXTRA_ARGS=()
 CONFIG_ARG=""
 
 if [ $# -lt 1 ]; then
-        echo "Usage: $0 <backup-dir> [--drop] [--no-owner] [--no-privileges] [--skip-maintenance] [-c <config>]" 1>&2
-        exit 2
-fi
-
-BACKUP_DIR_ARG="$1"
-shift
-
-if [ ! -d "$BACKUP_DIR_ARG" ]; then
-        echo "Error: backup directory not found: $BACKUP_DIR_ARG" 1>&2
-        exit 2
-fi
-
-if [ ! -f "$BACKUP_DIR_ARG/globals.sql.gz" ]; then
-        echo "Error: $BACKUP_DIR_ARG/globals.sql.gz not found - not a valid backup directory" 1>&2
+        echo "Usage: $0 <backup-dir> [--no-drop] [--no-owner] [--no-privileges] [--skip-maintenance] [-c <config>]" 1>&2
         exit 2
 fi
 
 SKIP_MAINTENANCE="no"
+DROP_FIRST="yes"   # default: overwrite existing databases (disaster recovery / dev transfer)
+
+# Parse args in any order: the first non-flag argument is the backup directory
 while [ $# -gt 0 ]; do
         case $1 in
-                --drop|--no-owner|--no-privileges)
+                --drop)
+                        DROP_FIRST="yes"
+                        shift
+                        ;;
+                --no-drop)
+                        DROP_FIRST="no"
+                        shift
+                        ;;
+                --no-owner|--no-privileges)
                         EXTRA_ARGS+=("$1")
                         shift
                         ;;
@@ -69,12 +74,40 @@ while [ $# -gt 0 ]; do
                         SKIP_MAINTENANCE="yes"
                         shift
                         ;;
-                *)
+                -*)
                         echo "Unknown option: $1" 1>&2
                         exit 2
                         ;;
+                *)
+                        if [ -z "$BACKUP_DIR_ARG" ]; then
+                                BACKUP_DIR_ARG="$1"
+                        else
+                                echo "Error: unexpected argument: $1" 1>&2
+                                exit 2
+                        fi
+                        shift
+                        ;;
         esac
 done
+
+if [ -z "$BACKUP_DIR_ARG" ]; then
+        echo "Error: no backup directory provided" 1>&2
+        exit 2
+fi
+
+if [ ! -d "$BACKUP_DIR_ARG" ]; then
+        echo "Error: backup directory not found: $BACKUP_DIR_ARG" 1>&2
+        exit 2
+fi
+
+if [ ! -f "$BACKUP_DIR_ARG/globals.sql.gz" ]; then
+        echo "Error: $BACKUP_DIR_ARG/globals.sql.gz not found - not a valid backup directory" 1>&2
+        exit 2
+fi
+
+if [ "$DROP_FIRST" = "yes" ]; then
+        EXTRA_ARGS+=("--drop")
+fi
 
 # Load config for the globals step (host/user/passfile)
 CONFIG_FILE=""

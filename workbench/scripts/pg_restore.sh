@@ -1,7 +1,13 @@
 #!/bin/bash
 
 # pg_restore.sh - Restore aspaDB databases from backup files
-# Author: Manfred Koroschetz (original), improved 2026-08
+# **Project**: aspaDB-workbench | **Path**: workbench/scripts/pg_restore.sh
+# **Version**: v1.1.0 | **Last Updated**: 2026-08-11 | **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# ## Changelog
+# - v1.1.0 (2026-08-11): Improved 2026-08 (restore-all, maintenance-only, no-create)
+# - v1.0.0 (2026-08-11): Initial standard header
 #
 # Usage:
 #   pg_restore.sh -d <backupfile> [--drop] [--no-owner] [--no-privileges] [-c <config>]

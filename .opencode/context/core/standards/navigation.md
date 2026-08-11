@@ -13,6 +13,7 @@
 | `code-quality.md` | Code quality rules | ⭐⭐⭐⭐⭐ | Writing/reviewing code |
 | `test-coverage.md` | Testing standards | ⭐⭐⭐⭐⭐ | Writing tests |
 | `documentation.md` | Documentation rules | ⭐⭐⭐⭐ | Writing docs |
+| `file-headers.md` | Version header standard (all file types) | ⭐⭐⭐⭐⭐ | Creating/editing ANY file |
 | `security-patterns.md` | Security best practices | ⭐⭐⭐⭐ | Security review, patterns |
 | `project-intelligence.md` | What and why | ⭐⭐⭐⭐ | Onboarding, understanding projects |
 | `project-intelligence-management.md` | How to manage | ⭐⭐⭐ | Managing intelligence files |
@@ -47,6 +48,10 @@
 
 **For documentation**:
 1. Load `documentation.md` (critical)
+2. Load `file-headers.md` (critical - version header required on every file)
+
+**For ANY file creation/edit**:
+1. Load `file-headers.md` (critical - mandatory header standard)
 
 **For code review**:
 1. Load `code-quality.md` (critical)

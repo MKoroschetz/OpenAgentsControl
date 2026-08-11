@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 #
 # run.sh - Execute a .sql file against the remote PostgreSQL database.
+# **Project**: aspaDB-workbench | **Path**: workbench/scripts/run.sh
+# **Version**: v1.0.0 | **Last Updated**: 2026-08-11 | **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# ## Changelog
+# - v1.0.0 (2026-08-11): Initial standard header
 #
 # Usage:
 #   ./scripts/run.sh [-e <profile>] <query-file.sql> [output-name]

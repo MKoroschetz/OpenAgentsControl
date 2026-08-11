@@ -1,7 +1,14 @@
 #!/bin/bash
 
 # pg_backup.sh - Full cluster backup for aspaDB
-# Author: Manfred Koroschetz (original), improved 2026-08
+# **Project**: aspaDB-workbench | **Path**: workbench/scripts/pg_backup.sh
+# **Version**: v1.2.0 | **Last Updated**: 2026-08-11 | **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# ## Changelog
+# - v1.2.0 (2026-08-11): Symlink auto-manual detection, --verify, restore-cluster.sh copy
+# - v1.1.0 (2026-08-11): Improved 2026-08 (symlink resolution, config via resolved path)
+# - v1.0.0 (2026-08-11): Initial standard header
 #
 # Usage:
 #   pg_backup.sh [-c <config>] [-m <suffix>] [--verify]
@@ -9,6 +16,10 @@
 #   -c <config>   Use an alternate config file (default: pg_backup.config)
 #   -m <suffix>   Append a suffix to the backup directory name (e.g. -manual)
 #   --verify      After each dump, verify integrity with pg_restore -l (custom) / gzip -t (plain)
+#
+# Manual backup: when invoked via the aspa_backup symlink, the backup
+# directory is automatically labeled -manual (e.g. 2026-08-11-manual),
+# distinguishing it from cron-triggered backups (2026-08-11).
 #
 # Produces per database:
 #   <db>.custom   - custom format (restore-able with pg_restore) [if ENABLE_CUSTOM_BACKUPS=yes]
@@ -18,8 +29,9 @@
 
 # NOTE: modified to use UNIX Socket to execute. 02-10-2022 - MK!
 
-## Change to script folder
-EXEDIR=$(dirname "$0")
+## Change to script folder (resolve symlinks so the aspa_backup link works)
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+EXEDIR=$(dirname "$SCRIPT_PATH")
 cd "$EXEDIR"
 
 ###########################
@@ -28,6 +40,14 @@ cd "$EXEDIR"
 SUFFIX=""
 CONFIG_FILE=""
 VERIFY="no"
+
+# When invoked via the aspa_backup link (manual backup), default to a
+# clearly labeled backup directory (e.g. 2026-08-11-manual) so manual
+# backups are distinguishable from cron-triggered ones.
+INVOKED_AS=$(basename "$0")
+if [ "$INVOKED_AS" = "aspa_backup" ]; then
+        SUFFIX="-manual"
+fi
 
 while [ $# -gt 0 ]; do
         case $1 in
@@ -61,7 +81,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$CONFIG_FILE" ]; then
-        SCRIPTPATH=$(cd "${0%/*}" && pwd -P)
+        SCRIPTPATH=$(dirname "$SCRIPT_PATH")
         CONFIG_FILE="$SCRIPTPATH/pg_backup.config"
 fi
 if [ -r "$CONFIG_FILE" ]; then
@@ -260,6 +280,7 @@ cp -af "${BACKUP_DIR}pg_backup_rotated.sh" "${FINAL_BACKUP_DIR}utilities/pg_back
 cp -af "${BACKUP_DIR}pg_backup.config" "${FINAL_BACKUP_DIR}utilities/pg_backup.config"
 cp -af "${BACKUP_DIR}pg_maintenance.sh" "${FINAL_BACKUP_DIR}utilities/pg_maintenance.sh"
 cp -af "${BACKUP_DIR}pg_restore.sh" "${FINAL_BACKUP_DIR}utilities/pg_restore.sh"
+cp -af "${BACKUP_DIR}restore-cluster.sh" "${FINAL_BACKUP_DIR}utilities/restore-cluster.sh"
 cp -af "${BACKUP_DIR}aspa_IngresCleanup.sh" "${FINAL_BACKUP_DIR}utilities/aspa_IngresCleanup.sh"
 cp -af "${BACKUP_DIR}.pgpass" "${FINAL_BACKUP_DIR}utilities/.pgpass"
 chmod 600 "${FINAL_BACKUP_DIR}utilities/.pgpass"
