@@ -69,6 +69,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO reporter;
 --    CREATE on the public schema to PUBLIC; without this revoke, reporter
 --    could create objects there. aspa has no PUBLIC CREATE grant (owner-only).
 REVOKE CREATE ON SCHEMA public FROM reporter;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 
 \echo ''
 \echo 'Reporter role is set up. Verify with:'

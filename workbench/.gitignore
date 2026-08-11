@@ -10,3 +10,9 @@ reports/
 *.history
 *.out
 .tmp/
+
+# Database backups - never commit (large binaries, contain .pgpass)
+# Dated backup dirs created by pg_backup.sh (e.g. 2026-06-30/)
+scripts/20*/
+scripts/*.custom
+scripts/*.sql.gz
