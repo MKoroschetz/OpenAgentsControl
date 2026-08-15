@@ -1,0 +1,916 @@
+## updated 9/1/2025 - MK for modern docker compose
+## updated 8/06/2025 - MK - ok
+## updated 1/27/2025 - MK
+## Testing 8/03/2024 - MK
+## Version 2/05/2024 - migration to aspa v3.1
+## Version 3/10/2023 - migration to aspa v3
+## Tested  3/xx/2023 - MK - ok
+## Based on tested MK - ok - 2/7/2022 for production 2022
+
+# adapted from production environment 172.20.61.220 - MK
+# *** https://remote.kellerei-terlan.com:678 -> 172.20.61.220 ***
+# Docker Network forced to 172.30.0.0/16
+# in: /etc/docker/daemon.json
+#     including:
+#                  "default-address-pools" : [
+#                    {
+#                      "base" : "172.30.0.0/16",
+#                      "size" : 24
+#                    }
+#                  ]
+#####
+
+networks:
+  backend:
+    driver: bridge
+    attachable: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.10.0/24
+          gateway: 172.30.10.1
+
+  frontend:
+    driver: bridge
+    attachable: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.20.0/24
+          gateway: 172.30.20.1
+
+  keycloak-net:
+    driver: bridge
+
+services:
+
+  portainer-ce:
+    container_name: portainer-ce
+    # image: portainer/portainer-ce:2.20.3  #** ok - 1/12/2024
+    # image: portainer/portainer-ce:2.21.5   #** 0k - 1/27/2025
+    # image: portainer/portainer-ce:2.27.1   #** 0k - 3/15/2025
+    # image: portainer/portainer-ce:2.33.1   #** 0k - 9/1/2025 #
+    image: portainer/portainer-ce:2.33.1-alpine   #** 0k - 9/1/2025 #
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./volumes/portainer-ce/data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9000 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  portainer_agent:
+    # image: portainer/agent:latest
+    # image: portainer/agent:2.27.1
+    image: portainer/agent:2.33.1-alpine
+    container_name: portainer_edge_agent
+    restart: always
+    environment:
+    - EDGE=1
+    - EDGE_ID=44e5355b-4c47-4527-8cad-9524b43d08bd
+    - EDGE_KEY=aHR0cDovLzE5Mi4xNjguMTAwLjI4OjkwMDB8MTkyLjE2OC4xMDAuMjg6ODAwMHw2NTpiMjpkYTo3YTo0YTpjZDozNDowYjpmZDo5ZjpiNDpmZTpmZjo1NTo5Mzo4M3wxMA
+    - EDGE_INSECURE_POLL=1
+    ports:
+    - 9001:9001
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    - /var/lib/docker/volumes:/var/lib/docker/volumes
+    - ./volumes/portainer_agent/data:/data
+    # healthcheck:
+    #   test: ["CMD-SHELL", "nc -z localhost 9001 || exit 1"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 5
+    #   start_period: 5s
+
+  aspaflows:    # modified format IOTstack
+    container_name: aspaFLOWS
+    build:
+      context: ./services/aspaflows/.
+      args:
+      - DOCKERHUB_TAG=3.0.2
+      # - EXTRA_PACKAGES=rsync cups cups-libs cups-client cups-filters
+      network: host
+    restart: unless-stopped
+    user: "0:0"
+    privileged: true
+    env_file: ./services/aspaflows/nodered.env
+    ports:
+      - 1880:1880
+    volumes:
+      - /mnt/data/aspaflows/data:/data
+        # Mapping to -> remote server
+      - /mnt/data/aspadata/_aspaRemote/Lieferscheine:/mnt/Lieferscheine
+      - /mnt/data/aspadata/_aspaRemote/Sortierbelege:/mnt/Sortierbelege
+      - /mnt/data/aspadata/_aspaRemote/DB-Backup:/mnt/DB-Backup
+        # Mapping to local aspa_api docs and DB backup folders
+      - /mnt/data/aspadata/DB-Backup:/data/DB-Backup
+      - /mnt/data/aspadata/aspaIngres/Lieferscheine:/data/Lieferscheine
+      - /mnt/data/aspadata/aspaSort/Sortierbelege:/data/Sortierbelege
+        # SSL certificate update mappings
+      - /mnt/data/aspadata/_aspaRemote/SSL-Certificate:/mnt/SSL-Certificate
+      - ./services/nginx/letsencrypt:/etc/letsencrypt
+        # Mapping to -> Print queues
+      - /mnt/data/aspastockapi/data/tmp:/data/toprint
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:1880/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  aspaflowsnew:    # modified format IOTstack
+    container_name: aspaFLOWSnew
+    build:
+      context: ./services/aspaflows-400/.
+      args:
+        # NR_TAG: 4.0.2-18
+        NR_TAG: 4.0.2-debian
+        # NR_TAG: 3.1.8-18
+      # - EXTRA_PACKAGES=rsync cups cups-libs cups-client cups-filters
+      network: host
+    restart: unless-stopped
+    user: "0:0"
+    privileged: true
+    env_file: ./services/aspaflows-400/nodered.env
+    ports:
+      - 2880:1880
+    volumes:
+      - /mnt/data/aspaflows-400/data:/data
+        # Mapping to -> remote server
+      #- /mnt/data/aspadata/_aspaRemote/Lieferscheine:/mnt/Lieferscheine
+      #- /mnt/data/aspadata/_aspaRemote/Sortierbelege:/mnt/Sortierbelege
+      #- /mnt/data/aspadata/_aspaRemote/DB-Backup:/mnt/DB-Backup
+        # Mapping to local aspa_api docs and DB backup folders
+      #- /mnt/data/aspadata/DB-Backup:/data/DB-Backup
+      #- /mnt/data/aspadata/aspaIngres/Lieferscheine:/data/Lieferscheine
+      #- /mnt/data/aspadata/aspaSort/Sortierbelege:/data/Sortierbelege
+        # SSL certificate update mappings
+      - /mnt/data/aspadata/_aspaRemote/SSL-Certificate:/mnt/SSL-Certificate
+      - ./services/nginx/letsencrypt:/etc/letsencrypt
+        # Mapping to -> Print queues
+      #- /mnt/data/aspastockapi/data/tmp:/data/toprint
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:1880/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  aspasort:    # modified format IOTstack
+    container_name: aspaSORT
+    build:
+      context: ./services/aspasort/.
+      args:
+      - DOCKERHUB_TAG=3.0.2
+    #  - EXTRA_PACKAGES=rsync cups cups-libs cups-client cups-filters
+    restart: unless-stopped
+    user: "0:0"
+    privileged: true
+    env_file: ./services/aspasort/nodered.env
+    ports:
+      - 1882:1880
+    volumes:
+      - /mnt/data/aspasort/data:/data
+        # Mapping to -> remote server
+      # - /mnt/data/aspadata/_aspaRemote/Lieferscheine:/mnt/Lieferscheine
+      - /mnt/data/aspadata/_aspaRemote/Sortierbelege:/mnt/Sortierbelege
+      # - /mnt/data/aspadata/_aspaRemote/DB-Backup:/mnt/DB-Backup
+        # Mapping to local aspa_api docs and DB backup folders
+      # - /mnt/data/aspadata/DB-Backup:/data/DB-Backup
+      # - /mnt/data/aspadata/aspaIngres/Lieferscheine:/data/Lieferscheine
+      - /mnt/data/aspadata/aspaSort/Sortierbelege:/data/Sortierbelege
+        # SSL certificate update mappings
+      - /mnt/data/aspadata/_aspaRemote/SSL-Certificate:/mnt/SSL-Certificate
+      - ./services/nginx/letsencrypt:/etc/letsencrypt
+        # Mapping to -> Print queues
+      - /mnt/data/aspastockapi/data/tmp:/data/toprint
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:1880/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  aspaapi:
+    container_name: aspaFLOWS_API
+    build:
+      context: ./services/aspaapi/.
+      args:
+      - DOCKERHUB_TAG=3.0.2
+      - EXTRA_PACKAGES=
+    restart: unless-stopped
+    user: "0"
+    privileged: true
+    # links:
+    #   - jasperreports:jasper   # Deprecated in modern Compose; service name resolution works automatically
+    env_file: ./services/aspaapi/aspaapi.env
+    ports:
+      - 1881:1880
+    volumes:
+      - /mnt/data/aspaapi/data:/data
+      - /mnt/data/aspadata/aspaIngres/Lieferscheine:/data/Lieferscheine
+      - /mnt/data/aspadata/aspaSort/Sortierbelege:/data/Sortierbelege
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://aspaapi:1880/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  aspaapi2:
+    ## recovery only !!!
+    container_name: aspaFLOWS_API2
+    build:
+      context: ./services/aspaapi2/.
+      args:
+      - DOCKERHUB_TAG=3.0.2
+      - EXTRA_PACKAGES=
+
+    restart: unless-stopped
+    user: "0"
+    privileged: true
+    # links:
+    #   - jasperreports:jasper   # Deprecated in modern Compose; service name resolution works automatically
+    env_file: ./services/aspaapi2/aspaapi.env
+    ports:
+      - 1884:1880
+    volumes:
+      - /mnt/data/aspaapi2/data:/data
+      #- /mnt/data/aspadata2/aspaIngres/Lieferscheine:/data/Lieferscheine
+      #- /mnt/data/aspadata2/aspaSort/Sortierbelege:/data/Sortierbelege
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:1880/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  aspaapp:  # new 5/1/2024
+    container_name: aspa_APP
+    image: 'registry.greentech.consulting/aspaapp-build-test:latest'
+    restart: unless-stopped
+    ports:
+      - "4000:80"
+    volumes:
+      # Mapping to static folder to publish PDF and other source files
+      - /mnt/data/aspaapp-prod/dist/spa/statics:/app/dist/spa/statics
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://aspaapp:80/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  aspastockapi:
+    container_name: aspastockapi
+    build:
+      context: ./services/aspastockapi/.
+      args:
+      - DOCKERHUB_TAG=3.0.2
+      - EXTRA_PACKAGES=
+    restart: unless-stopped
+    user: "0"
+    privileged: true
+    env_file: ./services/aspastockapi/aspastockapi.env
+    ports:
+      - 1889:1880
+    volumes:
+      - /mnt/data/aspastockapi/data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://aspastockapi:1880/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  aspastock:
+    container_name: aspaSTOCK
+    # image: 'registry.greentech.consulting/aspastock-build-test:latest'
+    image: 'registry.greentech.consulting/aspastock-build-test'
+    restart: unless-stopped
+    ports:
+      - '8084:80'
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 5
+    #   start_period: 10s
+
+  aspasales:
+    container_name: aspaSALES
+    image: 'registry.greentech.consulting/aspasales-build-test:latest'
+    restart: unless-stopped
+    ports:
+      - '8085:80'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  aspaauth:
+    container_name: aspaAUTH
+    image: 'node:latest'
+    restart: unless-stopped
+    user: "node"
+    working_dir: /home/node/app
+    env_file:
+      - ./services/aspaauth/aspa_auth.env
+    environment:
+      - ISSUER=https://dev-50491138.okta.com/oauth2/default
+    ports:
+      - '3101:3101'
+    volumes:
+      - ./volumes/aspaauth:/home/node/app
+    depends_on:
+      aspaapi:
+        condition: service_healthy
+    command: "node ."
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://localhost:3101/ || exit 1"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 5
+    #   start_period: 10s
+
+  aspa-login:
+    container_name: aspa-login
+    image: 'registry.greentech.consulting/aspalogin-build-test:latest'
+    restart: unless-stopped
+    ports:
+      - "4010:80"
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 5
+    #   start_period: 10s
+
+  # aspabackendapi_prod_db:    # modified 3/21/2023 - ok 5/2/2024
+  #   container_name: backendapi_prod_db
+  #   image: "registry.greentech.consulting/backendapi"
+  #   restart: unless-stopped
+  #   user: "node"
+  #   working_dir: /home/node/app
+  #   env_file:
+  #     - ./services/aspabackend/production.env
+  #   environment:
+  #     - NODE_ENV=production
+  #   volumes:
+  #     - /mnt/data/aspabackend/backendapi/data:/home/node/app
+  #   ports:
+  #     - "3000:3000"
+  #   command: "npm start"
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 10s
+
+  mosquitto:
+    container_name: aspa_mqtt
+    image: eclipse-mosquitto
+    restart: unless-stopped
+    #restart: "no"
+    user: "1883"
+    ports:
+      - 1883:1883
+      # - 9001:9001  ##Disabled for portainer agent conflict 1/12/2029 MK
+    volumes:
+      - ./services/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - /mnt/data/mosquitto/data:/mosquitto/data
+      - /mnt/data/mosquitto/log:/mosquitto/log
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 1883 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  postgres:
+    image: postgres:12.13  #** ok - 3/10/2023
+    container_name: aspaDB
+    restart: unless-stopped
+    env_file:
+      - ./services/postgres/postgres.env
+    ports:
+      - "5432:5432"
+    volumes:
+      # PGDATA mapping
+      # ./volumes/postgres/data:/var/lib/postgresql/data
+      # PGDATA 16
+      - ./volumes/postgres/data:/var/lib/postgresql/16/data
+      - /mnt/data/aspadata/DB-Backup:/mnt/DB-Backup
+      # unix PG socket mapping. Needed to acces psql, pg_dump, pg_dumpall from host
+      - /var/run/postgresql:/var/run/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # pgagent:
+  #   # ** --> uses pgagent from image postgres:17
+  #   container_name: aspaDB_AGENT
+  #   build:
+  #     context: ./services/postgres/.
+  #   env_file:
+  #     - ./services/postgres/pgagent.env
+  #   volumes:
+  #     # The following can be used to override the default password of the image
+  #     # - ./services/postgres/pgagent.override:/root/.pgpass:ro
+  #     - ./services/postgres/pgagent.pgpass:/root/.pgpass:ro
+  #   entrypoint: "/bin/sh -c '/usr/bin/pgagent -f -l 2 host=$${PGHOST} dbname=$${PGDATABASE} user=$${PGUSER} port=$${PGPORT}'"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U pgagent -d mydb -h postgres"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+  # pgadmin: # ***** needs revised build
+  #   container_name: aspaDB_ADMIN
+  #   # image: dpage/pgadmin4:latest
+  #   # image: dpage/pgadmin4:8.5     #** ok - 4/7/2024
+  #   image: dpage/pgadmin4:9.8     #** ok - 9/7/2025
+  #   restart: unless-stopped
+  #   ports:
+  #     - "9081:80/tcp"
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: admin@greentech.consulting
+  #     PGADMIN_DEFAULT_PASSWORD: <REDACTED>
+  #   volumes:
+  #     - ./volumes/pgadmin:/var/lib/pgadmin
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   # healthcheck:
+  #   #   test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+  #   #   interval: 10s
+  #   #   timeout: 5s
+  #   #   retries: 5
+  #   #   start_period: 10s
+  nginx:
+    # aspa-Frontend Manager / Balancer
+    container_name: nginx
+    image: 'bitnami/nginx:latest'
+    user: "root"
+    restart: unless-stopped
+    environment:
+      DISABLE_IPV6: 'true'
+    env_file:
+      - ./services/nginx/nginx.env
+    ports:
+      - '80:8081'
+      - '678:678'
+      - '443:443'
+    volumes:
+      # SSL configuration
+      - ./services/nginx/letsencrypt:/etc/letsencrypt
+      # NGINX basic config
+      #- ./services/nginx/nginx.conf:/opt/bitnami/nginx/conf/nginx.conf:ro
+      # site configurations
+      - ./services/nginx/sites-enabled:/opt/bitnami/nginx/conf/server_blocks
+      # HTML pages for local sites
+      - /mnt/data/nginx/html:/app
+      # LOG configuration
+      - /mnt/data/nginx/log:/opt/bitnami/nginx/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+#   mariadb:
+#     container_name: mariadb
+#     image: 'bitnami/mariadb:10.3'
+#     restart: unless-stopped
+#     env_file:
+#       - ./services/jasperreports/mariadb.env
+#     volumes:
+#       - ./volumes/jasperreports/mariadb_data:/bitnami
+#     healthcheck:
+#       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$${MARIADB_USER:-root} --password=$${MARIADB_PASSWORD:-root} || exit 1"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+#       start_period: 10s
+
+#   # jasperreports:
+#   #   container_name: jasperreports
+#   #   image: 'bitnami/jasperreports:7'
+#   #   restart: unless-stopped
+#   #   env_file:
+#   #     - ./services/jasperreports/jasperreports.env
+#   #   ports:
+#   #     - '8080:8080'
+#   #     - '8443:8443'
+#   #   volumes:
+#   #     - ./volumes/jasperreports/jasperreports_data:/bitnami
+#   #   depends_on:
+#   #     mariadb:
+#   #       condition: service_healthy
+#   #   healthcheck:
+#   #     test: ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"]
+#   #     interval: 10s
+#   #     timeout: 5s
+#   #     retries: 5
+#   #     start_period: 15s
+
+
+# #### *** Andrian only - local support systems
+
+
+#   influxdb:
+#     container_name: influxdb
+#     image: "influxdb:latest"
+#     restart: unless-stopped
+#     ports:
+#       - 8086:8086
+#       - 8083:8083
+#       - 2003:2003
+#     env_file:
+#       - ./services/influxdb/influxdb.env
+#     volumes:
+#       - ./volumes/influxdb/data:/var/lib/influxdb
+#       - ./backups/influxdb/db:/var/lib/influxdb/backup
+#     healthcheck:
+#       test: ["CMD-SHELL", "curl -f http://influxdb:8086/health || exit 1"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+#       start_period: 10s
+
+#   grafana:
+#     container_name: grafana
+#     # image: grafana/grafana:8.3.4
+#     image: grafana/grafana:12.1.1
+#     restart: unless-stopped
+#     user: "0"
+#     ports:
+#       - 3003:3000
+#     env_file:
+#       - ./services/grafana/grafana.env
+#     volumes:
+#       - ./volumes/grafana/data:/var/lib/grafana
+#       - ./volumes/grafana/log:/var/log/grafana
+#     depends_on:
+#       influxdb:
+#         condition: service_healthy
+#     healthcheck:
+#       test: ["CMD-SHELL", "curl -f http://grafana:3000/api/health || exit 1"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+#       start_period: 15s
+
+#   telegraf:
+#     container_name: telegraf
+#     image: telegraf:1.20.3
+#     restart: unless-stopped
+#     #restart: "no"
+#     user: telegraf:989 # stat -c '%g' /var/run/docker.sock
+#     volumes:
+#       - ./services/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+#       - /var/run/docker.sock:/var/run/docker.sock:ro
+#       - /:/hostfs:ro
+#     depends_on:
+#       influxdb:
+#         condition: service_healthy
+#       mosquitto:
+#         condition: service_healthy
+#     healthcheck:
+#       test: ["CMD-SHELL", "telegraf --test || exit 1"]
+#       interval: 30s
+#       timeout: 10s
+#       retries: 3
+#       start_period: 20s
+
+#   motioneye:
+#     container_name: aspa_video
+#     image: "ccrisan/motioneye:master-amd64"
+#     restart: unless-stopped
+#     ports:
+#       - 8765:8765
+#       - 8781:8081
+#     volumes:
+#       - /etc/localtime:/etc/localtime:ro
+#       - /mnt/data/motioneye/etc_motioneye:/etc/motioneye
+#       # Mount media on LVM volume -> media
+#       - /mnt/media/video:/var/lib/motioneye
+#     healthcheck:
+#       test: ["CMD-SHELL", "curl -f http://localhost:8765/ || exit 1"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 5
+#       start_period: 15s
+
+
+  # -------- Remote support systems ----------------
+
+  # hbbs:
+  #   container_name: rustdesk_signaling
+  #   image: rustdesk/rustdesk-server:latest
+  #   command: hbbs
+  #   restart: unless-stopped
+  #   ports:
+  #     - 21115:21115
+  #     - 21116:21116
+  #     - 21116:21116/udp
+  #     - 21118:21118
+  #   volumes:
+  #     - ./volumes/rustdesk:/root
+  #   network_mode: "host"   # Required for P2P/direct connections
+
+  # hbbr:
+  #   container_name: rustdesk-relay
+  #   image: rustdesk/rustdesk-server:latest
+  #   command: hbbr
+  #   restart: unless-stopped
+  #   ports:
+  #     - 21117:21117
+  #     - 21119:21119
+  #   volumes:
+  #     - ./volumes/rustdesk:/root
+  #   network_mode: "host"
+
+
+# #--------------- PRKT - Dev - Environment
+# # loopback 4.0
+# # updated 9/1/2025 - MK
+# # https://loopback.io/doc/en/lb4/Command-line-interface.html
+
+  # prkt-api:
+  #   container_name: prkt-api
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3006:3006"
+  #   build:
+  #     context: ./services/prkt-api/.
+  #     ## image: node:20-slim or node:24 (Debian based)
+  #     dockerfile: Dockerfile.debian.node24
+  #     ## following may be needed for building container
+  #   environment:
+  #     HOST: 0.0.0.0
+  #     PORT: 3006
+  #     NODE_ENV: development
+  #   working_dir: /app/prkt-api
+  #   volumes:
+  #     # Bind-mount your app's source code
+  #     - prkt-api_data:/app
+  #     # Keep container-built node_modules separate
+  #     - prkt-api_modules:/app/prkt-api/node_modules
+  #   command: "npm run dev"
+  #   depends_on:
+  #     prkt-db:
+  #       condition: service_healthy   # Wait until prkt-db healthcheck passes
+  #   networks:
+  #     - frontend
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -f http://prkt-api:3006 || exit 1"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 15s
+
+  # prkt-app:
+  #   # # *** INSTRUCTIONS FOR CLEAN START ****
+  #   # 1. Stop and remove only the prkt-app container
+  #   # docker compose rm -sf prkt-app
+  #   # 2. Remove only the prkt_app_modules named volume
+  #   # docker volume rm $(docker volume ls -q --filter name=prkt_app_modules)
+  #   # 3. Wipe the bind-mounted app source folder on the host
+  #   # rm -rf ./volumes/quasar/prkt-app/prkt-app
+  #   # 4. (Optional) wipe template if you want to trigger "no template" path
+  #   # rm -rf ./services/quasar/template/*
+  #   # 5. Rebuild prkt-app image without cache
+  #   # docker compose build --no-cache prkt-app
+  #   # 6. FIRST run to setup the app (no template available)
+  #   # docker compose run --rm -it prkt-app
+  #   ## *** END OF INSTRUCTIONS
+  #   build:
+  #     context: ./services/quasar/.
+  #     dockerfile: Dockerfile.trixie
+  #   container_name: prkt-app
+  #   ports:
+  #     - "8080:9001"
+  #   volumes:
+  #     # Bind-mount your app's source folder
+  #     - prkt-app_data:/usr/src/app
+  #     # Named volume for node_modules
+  #     - prkt-app_modules:/usr/src/app/node_modules
+  #     # Optional: template folder (if you want dynamic updates)
+  #     #           make de following <:ro> if no updates are expected/required
+  #     - ./services/quasar/template:/usr/local/share/quasar-template:rw
+  #   working_dir: /usr/src/app
+  #   environment:
+  #     - HOST=0.0.0.0
+  #     - FORCE_FIRST_RUN=false
+  #   tty: true          # ✅ ensures TTY is allocated
+  #   stdin_open: true   # ✅ keeps STDIN open (needed for interactive shells)
+  #   # For diagnostic use to enter into container without running apps
+  #   # entrypoint: /bin/bash
+  #   networks:
+  #     - frontend
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:9001"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 10s
+
+  prkt-db:
+    container_name: prkt-db
+    build:
+      context: ./services/prkt-db/.
+      dockerfile: Dockerfile.v2.prkt-db
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    env_file:
+      - ./services/prkt-db/postgres.env
+    volumes:
+      # PGDATA mapping
+      # Named volume mapped to host path for PGDATA
+      - prkt-db_pgdata:/var/lib/postgresql/17/data         # 9/5/2025 latest 17.x minor from PGDG change to 17
+
+      # Mount point to run custom scripts during installation - Disable when finished
+      # - ./services/prkt-db/init:/docker-entrypoint-initdb.d/
+
+      # Mount point for backups to be sent to different server Via FTP or similar service
+      # - /mnt/data/prkt-db/DB-Backup:/mnt/DB-Backup
+
+      # unix PG socket mapping. Needed to acces psql, pg_dump, pg_dumpall from host
+      # - /var/run/postgresql:/var/run/postgresql
+    networks:
+      - keycloak-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  keycloak:
+    container_name: keycloak
+    # command: start --optimized
+    build:
+      context: ./services/prkt-auth/.
+      dockerfile: Keycloak.debian-slim
+      # Keep the ENTRYPOINT in the Dockerfile, but use 'command' to pass flags
+      # This appends these arguments to the end of your bin/kc.sh call
+    command: ["--verbose"]
+    environment:
+      # Database configuration
+      KC_DB: postgres
+      KC_DB_USERNAME: keycloak_user
+      KC_DB_PASSWORD: prkt-auth.Spargel.2025
+      KC_DB_URL: jdbc:postgresql://prkt-db:5432/keycloak
+      # Admin credentials
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: prkt-auth.Spargel.2025
+      # Server configuration
+      # Tell Keycloak that it is being served via HTTPS by the proxy
+      KC_HOSTNAME: https://vero.greentech.consulting:8090
+      # Relax the strict hostname requirement for your setup
+      KC_HOSTNAME_STRICT: false # Set to true for production
+      # Allow HTTP for now (required if you haven't set up TLS yet)
+      KC_HTTP_ENABLED: true
+      # Tell Keycloak it's behind a proxy
+      # KC_PROXY_MODE: edge   # deprecated in KC 26.5
+      # Tell it which headers to trust
+      KC_PROXY_HEADERS: xforwarded
+      # *** Health API enpoints
+      KC_ENABLE_HEALTH: "true"
+      KC_ENABLE_METRICS: "true"
+      # Explicitly set the management port to ensure it's not inherited
+      KC_HTTP_MANAGEMENT_PORT: 9000
+      KC_HTTP_MANAGEMENT_HOST: 0.0.0.0  # <--- This is the key
+    networks:
+      - keycloak-net
+    ports:
+      - "8090:8080"
+      - "8091:9000"
+    restart: always
+    volumes:
+      - kc-data:/opt/keycloak/data
+    depends_on:
+      prkt-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl -s -f -I http://keycloak:8080/realms/master/.well-known/openid-configuration"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 60s # Keycloak needs time to "re-augment" on first boot
+
+secrets:
+  kc_db_password:
+    file: ./services/prkt-auth/kc_db_password.txt
+
+volumes:
+  # dedicated persistent volumes for prkt-auth / keycloak
+  kc-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./volumes/prkt-auth/data
+  # prkt-api dedicated /node_modules volume persistent in the container×¥
+  prkt-api_modules:
+  prkt-api_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./volumes/prkt-api
+  # prkt-app dedicated /node_modules volume persistent in the container
+  prkt-app_modules:
+  prkt-app_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./volumes/quasar/prkt-app
+  prkt-db_pgdata:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./volumes/prkt-db/data
+
+
+
+
+
+## Deprecated services - Remove once testing is completed
+
+#    container_name: aspaPRINT
+    #image: tmaragno/aspaprint:latest
+    #build: ./services/aspaprint/.
+#    build:
+#      context: ./services/aspaprint/.
+#      args:
+#      - DOCKERHUB_TAG=latest
+#      - EXTRA_PACKAGES=
+#    restart: unless-stopped
+#    network_mode: host
+#    user: "node"
+#    working_dir: /home/node/app
+#    env_file:
+#      - ./services/aspaprint/print.env
+    #environment:
+      #- CUPS_USER_ADMIN=admin
+      #- CUPS_USER_PASSWORD=secr3t
+      #- PRINTER_MODEL=HL-5240-series
+      #- PRINTER_ADDRESS=/dev/bus/usb/001/006
+      #- NODE_ENV=production
+#    volumes:
+#      - ./volumes/aspapdfprinter:/home/node/app
+#      - ./services/aspaprint/client.conf:/etc/cups/client.conf
+      #- /var/run/cups:/var/run/cups:ro
+      #- /run/cups/cups.sock:/run/cups/cups.sock:ro
+      #- /var/run/cups/cups.sock:/var/run/cups/cups.sock:ro
+#      - /mnt/data/aspadata/aspaIngres/Lieferscheine:/data/Lieferscheine
+#      - /mnt/data/aspadata/aspaSort/Sortierbelege:/data/Sortierbelege
+      #- /root/IOTstack/volumes/aspaapi/data/tmp:/aspaapi/data/tmp
+#      - /mnt/data/aspaapi/data/tmp:/aspaapi/data/tmp
+#      - /mnt/data/aspastockapi/data:/aspastockapi/data
+#    ports:
+#      - "8081:8081"
+#    command: "node ."
+
+
+#  jasperreports_8:
+#  jasperreports:
+#    container_name: jasperreports_8
+#    container_name: jasperreports
+#    image: 'bitnami/jasperreports:latest'
+#    restart: unless-stopped
+#    env_file:
+#      - ./services/jasperreports_8/jasperreports.env
+#    ports:
+#      #- "8079:8080"
+#      #- "8444:8443"
+#      - "8080:8080"
+#      - "8443:8443"
+#    volumes:
+#      #- ./volumes/jasperreports_8/jasperreports_data:/bitnami
+#      - ./volumes/jasperreports/jasperreports_data:/bitnami
+#      - ./volumes/jasperreports/mariadb_data:/bitnami
+#    depends_on:
+#      - mariadb

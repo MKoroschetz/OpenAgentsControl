@@ -1,0 +1,14 @@
+  pgadmin:
+    container_name: pgAdmin4
+    #image: dpage/pgadmin4:latest
+    image: dpage/pgadmin4:6.3
+    restart: unless-stopped
+    #working_dir: /home/node/app
+    env_file:
+      - ./services/pgadmin/pgadmin.env
+    ports:
+      - '9081:80'
+    volumes:
+      - /mnt/data/pgadmin:/var/lib/pgadmin \
+
+

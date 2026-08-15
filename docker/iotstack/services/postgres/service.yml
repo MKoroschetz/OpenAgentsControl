@@ -1,0 +1,41 @@
+  postgres:
+    image: postgres:12.13  #** ok - 3/10/2023
+    container_name: aspaDB
+    restart: unless-stopped
+    env_file:
+      - ./services/postgres/postgres.env
+    ports:
+      - "5432:5432"
+    volumes:
+      # PGDATA mapping
+      - ./volumes/postgres/data:/var/lib/postgresql/16/data  
+      - /mnt/data/aspadata/DB-Backup:/mnt/DB-Backup
+      # unix PG socket mapping. Needed to acces psql, pg_dump, pg_dumpall from host
+      - /var/run/postgresql:/var/run/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  pgagent: 
+    # ** --> uses pgagent from image postgres:17
+    container_name: aspaDB_AGENT
+    build:
+      context: ./services/postgres/.
+    env_file:
+      - ./services/postgres/pgagent.env
+    volumes:
+      # The following can be used to override the default password of the image
+      # - ./services/postgres/pgagent.override:/root/.pgpass:ro
+      - ./services/postgres/pgagent.pgpass:/root/.pgpass:ro
+    entrypoint: "/bin/sh -c '/usr/bin/pgagent -f -l 2 host=$${PGHOST} dbname=$${PGDATABASE} user=$${PGUSER} port=$${PGPORT}'"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pgagent -d mydb -h postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
