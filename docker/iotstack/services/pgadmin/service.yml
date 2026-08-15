@@ -1,14 +1,19 @@
+# Per-container service-section BACKUP for the pgadmin container.
+# **Project**: aspaDB-workbench | **Path**: docker/iotstack/services/pgadmin/service.yml
+# Captured 2026-08-15; UPDATED to the version already planned in the active
+# compose's commented block (dpage/pgadmin4:9.8, port 9081, volumes/pgadmin).
+# The old template pinned dpage/pgadmin4:6.3 (2022) with data at /mnt/data/pgadmin.
+
   pgadmin:
     container_name: pgAdmin4
-    #image: dpage/pgadmin4:latest
-    image: dpage/pgadmin4:6.3
+    image: dpage/pgadmin4:9.8        # planned target (please bump to latest 9.x before activate)
     restart: unless-stopped
-    #working_dir: /home/node/app
     env_file:
       - ./services/pgadmin/pgadmin.env
     ports:
-      - '9081:80'
+      - "9081:80"
     volumes:
-      - /mnt/data/pgadmin:/var/lib/pgadmin \
-
-
+      - ./volumes/pgadmin:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy

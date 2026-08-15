@@ -1,0 +1,66 @@
+# TARGET compose section - postgres + pgadmin (DRAFT for review, NOT active).
+# **Project**: aspaDB-workbench | **Path**: docker/iotstack/docker-compose.target-postgres.yml
+# Drafted 2026-08-15 for review against the captured baseline
+# (docker/iotstack/docker-compose.yml, commit 80c4f17). Do NOT deploy to
+# /mnt/db/IOTstack/docker-compose.yml until reviewed + migration planned (§A).
+#
+# Changes vs current active setup:
+#   1. postgres service: image postgres:12.13  ->  combined aspadb-postgres:17
+#      (PG 17 + pgagent daemon in ONE container, architecture C).
+#   2. volume: volumes/postgres/data:/var/lib/postgresql/16/data (STALE, points
+#      at an old PG-12 dir)  ->  volumes/postgres17/data:/var/lib/postgresql/17/main
+#      (FRESH dir, filled by dump/restore). Solves the anonymous-volume trap:
+#      live data currently sits in an anonymous docker volume, not under volumes/.
+#   3. pgagent service (separate sidecar, was commented out) is REMOVED -
+#      pgagent now runs inside the postgres container (entrypoint).
+#   4. pgadmin: re-enabled as dpage/pgadmin4:9.8 on 9081 (was commented out).
+#
+# Migration order per runbook Part A: side container pg17 on :5433 with FRESH
+# data dir -> restore globals/postgres/aspadb -> verify -> cut aspaDB over to
+# :5432 -> retire old container. Fresh backup first (pg_backup.sh --verify).
+
+  postgres:
+    build:
+      context: ./services/postgres/.
+      dockerfile: Dockerfile
+    image: aspadb-postgres:17     # combined postgres+pgagent (Dockerfile ../../postgres/Dockerfile)
+    container_name: aspaDB
+    restart: unless-stopped
+    env_file:
+      - ./services/postgres/postgres.env
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./volumes/postgres17/data:/var/lib/postgresql/17/main
+      - /mnt/data/aspadata/DB-Backup:/mnt/DB-Backup
+      - /var/run/postgresql:/var/run/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h /var/run/postgresql || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  pgadmin:
+    container_name: pgAdmin4
+    image: dpage/pgadmin4:9.8
+    restart: unless-stopped
+    env_file:
+      - ./services/pgadmin/pgadmin.env
+    ports:
+      - "9081:80"
+    volumes:
+      - ./volumes/pgadmin:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+# Side-by-side migration container (run until cutover, then retire):
+#   postgres:
+#     image: aspadb-postgres:17
+#     container_name: pg17
+#     environment: [ "POSTGRES_PASSWORD=***" ]
+#     ports: [ "5433:5432" ]
+#     volumes:
+#       - ./volumes/postgres17/data:/var/lib/postgresql/17/main
+#     ports: 5433:5432

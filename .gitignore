@@ -228,3 +228,10 @@ tasks/
 integrations/claude-code/converter/generated/
 .cursorrules
 bun.lock
+
+# SSH keys for remote hosts (dev/prod Docker hosts) - NEVER commit
+# Key files live in ~/.ssh/, these entries guard against accidental copies into the repo
+aspaDB-dev
+aspaDB-dev.pub
+id_mk_rsa
+id_mk_rsa.pub

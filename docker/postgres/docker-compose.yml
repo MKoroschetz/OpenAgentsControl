@@ -1,0 +1,27 @@
+# **Project**: aspaDB-workbench | **Path**: docker/postgres/docker-compose.yml
+# **Version**: v2.0.0 | **Last Updated**: 2026-08-15 | **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# Reference compose for the combined postgres+pgagent container (architecture C).
+# On the Docker hosts this is managed via the IOTstack compose; the service
+# section here mirrors docker/iotstack/services/postgres/service.yml.
+#
+# Side-by-side migration: run with ports "5433:5432" and container_name pg17,
+# restore into ./volumes/postgres17/data, verify, then switch to 5432/aspaDB.
+
+services:
+  postgres:
+    build: .
+    image: aspadb-postgres:17
+    container_name: aspaDB
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./volumes/postgres17/data:/var/lib/postgresql/17/main
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h /var/run/postgresql || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

@@ -23,7 +23,8 @@ source of truth — the live files are on the Docker hosts.
 | Path | Notes |
 |------|-------|
 | `docker-compose.yml` | Verbatim capture of the ACTIVE compose (drives `aspaDB`) |
-| `services/postgres/service.yml` | postgres + pgagent service templates |
+| `docker-compose.target-postgres.yml` | **DRAFT** revised postgres+pgadmin sections for review (NOT active) |
+| `services/postgres/service.yml` | postgres+pgagent combined section (target backup) |
 | `services/postgres/Dockerfile` | Existing pgagent image build (`FROM postgres:17` + pgagent) |
 | `services/postgres/pgagent.env` | PGHOST/PGPORT/PGUSER/PGPASSFILE (no secret) |
 | `services/postgres/pgagent.sql` | Extension + role setup SQL template |
@@ -50,10 +51,10 @@ source of truth — the live files are on the Docker hosts.
    active compose, not running. Data dir in template points at `/mnt/data/pgadmin`,
    while `volumes/pgadmin/` holds an older `pgadmin4.db`.
 4. **Existing `services/postgres/Dockerfile` is a *combined* postgres+pgagent**
-   image (`FROM postgres:17`, installs pgagent). The repo's
-   `docker/pg-agent/Dockerfile` is a *minimal* pgagent-only sidecar
-   (debian:bullseye-slim, no PG server). Decide which model to adopt for the
-   update (see §Update plan).
+   image (`FROM postgres:17`, installs pgagent). **Decision: adopt architecture C**
+   — the repo `docker/postgres/Dockerfile` (Debian 13 + PG 17 + pgagent, with
+   entrypoint running server + daemon) supersedes both the old combined file and
+   the earlier minimal sidecar experiment.
 
 ## Migration question — how to move the existing DB
 
@@ -85,13 +86,34 @@ Key compose changes to review in the updated section:
 - re-check the anonymous-volume trap: prefer a **named/bind** host path for PGDATA
   so `docker compose down -v` can never wipe the DB
 
-## Update plan (3 containers)
+## Update plan (3 containers → 2)
+
+Decision (2026-08-15): **architecture C** — postgres + pgagent run in ONE
+combined container, built from the repo Dockerfile (`docker/postgres/Dockerfile`).
 
 | # | Container | Current | Target | Activate |
 |---|-----------|---------|--------|----------|
-| 1 | postgres (aspaDB) | `postgres:12.13`, live data in anonymous volume | `postgres:17.11` + fresh host data dir via dump/restore | after restore verified |
-| 2 | pgagent (aspaDB_AGENT) | commented out; combined postgres:17 image | minimal sidecar (`docker/pg-agent/Dockerfile`) OR keep combined image | after postgres migration |
-| 3 | pgadmin (pgAdmin4) | template only; `dpage/pgadmin4:6.3` | current `dpage/pgadmin4` (8.x/9.x), port 9081, keep `volumes/pgadmin` | after DB migration |
+| 1 | postgres + pgagent (aspaDB) | `postgres:12.13`; live data in anonymous volume; pgagent sidecar commented out | combined `aspadb-postgres:17` (PG 17 + pgagent daemon), fresh `volumes/postgres17/data` via dump/restore | after restore verified |
+| 2 | pgadmin (pgAdmin4) | template only; `dpage/pgadmin4:6.3` | `dpage/pgadmin4:9.8`, port 9081, `volumes/pgadmin` | after DB migration |
 
-Activation order: **postgres → pgagent → pgadmin**, each with its own checkpoint
+Activation order: **postgres(+pgagent) → pgadmin**, each with its own checkpoint
 (runbook §8 / §10 validation matrix).
+
+## Versioning & per-container backup (convention, adopted 2026-08-15)
+
+- The IOTstack `docker-compose.yml` is kept **properly versioned**: the live
+  host keeps dated/versioned copies (`docker-compose.yml.03232026`,
+  `docker-compose.yml.v1.0.0`), and this repo captures a **verbatim, git-tracked
+  baseline** (`docker/iotstack/docker-compose.yml`, checksum-verified, commit
+  80c4f17).
+- Each container's compose **service section is hosted as a backup** in the
+  corresponding `./services/<container name>/` folder:
+  - `services/postgres/service.yml` ← combined postgres+pgagent section (target)
+  - `services/pgadmin/service.yml` ← pgadmin section (target)
+  - These mirror the IOTstack convention (menu.sh composes
+    `docker-compose.yml` from `services/<name>/service.yml`).
+- **Proposed future compose** (NOT active): `docker/docker-compose.target-postgres.yml`
+  captures the reviewed postgres+pgadmin sections for review before enabling.
+- Rule: when any container section changes, update BOTH its
+  `services/<name>/service.yml` and the compose, and bump the compose backup
+  copy (host) + this repo capture.
