@@ -2,10 +2,16 @@
 
 # aspa_restore.sh - host-level restore wrapper for the aspaDB postgres container.
 # **Project**: aspaDB-workbench | **Path**: workbench/scripts/aspa_restore.sh
-# **Version**: v1.2.2 | **Last Updated**: 2026-08-17 | **Author**: Manfred Koroschetz/AI
+# **Version**: v1.2.3 | **Last Updated**: 2026-08-17 | **Author**: Manfred Koroschetz/AI
 # **License**: SPDX-License-Identifier: MIT
 #
 # ## Changelog
+# - v1.2.3 (2026-08-17): Bare backup names now resolve without their containing
+#   path - a plain `aspa_restore <name>` first tries the arg relative to $PWD
+#   (unchanged), then falls back to SCRIPT_DIR/<name>. This wrapper is always
+#   deployed alongside the actual backup directories (e.g. DB_Backup/
+#   aspa_restore.sh next to DB_Backup/2026-08-17-manual/), so the caller no
+#   longer has to know or type the DB_Backup/ prefix from the parent dir.
 # - v1.2.2 (2026-08-17): PGDATA_TARGET auto-detection - this wrapper builds its
 #   own throwaway config for pg_restore.sh (HOSTNAME/PORT/PGPWDFILE only),
 #   which REPLACES pg_backup.config entirely rather than layering on it, so
@@ -106,12 +112,24 @@ if [ $# -lt 1 ]; then
         echo "Usage: aspa_restore.sh <backup-dir> [pg_restore args...]" 1>&2
         exit 2
 fi
-BACKUP_DIR="$1"
-BACKUP_DIR="$(readlink -f "$BACKUP_DIR")"
+BACKUP_DIR_ARG="$1"
 shift
 
+# Resolve the backup dir: as given first (relative to $PWD, or absolute), then
+# as a bare name relative to SCRIPT_DIR - this wrapper is always deployed
+# alongside the actual backup directories (e.g. DB_Backup/aspa_restore.sh next
+# to DB_Backup/2026-08-17-manual/), so a bare backup name should resolve
+# without the caller having to know or type its containing path.
+if [ -d "$BACKUP_DIR_ARG" ]; then
+        BACKUP_DIR="$(readlink -f "$BACKUP_DIR_ARG")"
+elif [ -d "$SCRIPT_DIR/$BACKUP_DIR_ARG" ]; then
+        BACKUP_DIR="$(readlink -f "$SCRIPT_DIR/$BACKUP_DIR_ARG")"
+else
+        BACKUP_DIR="$(readlink -f "$BACKUP_DIR_ARG")"
+fi
+
 [[ -d "$BACKUP_DIR" ]] || {
-  echo "ERROR: backup directory not found: $BACKUP_DIR"
+  echo "ERROR: backup directory not found: $BACKUP_DIR_ARG (looked relative to \$PWD and to $SCRIPT_DIR)"
   exit 1
 }
 
