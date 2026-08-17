@@ -1,11 +1,21 @@
 # PostgreSQL 12.13 → 17.11 Upgrade Guide (Debian 10/13 → Debian 13)
 
 **Project**: aspaDB-workbench | **Path**: docs/CORE-PLATFORM-UPGRADE.md
-**Version**: v1.8.0 | **Last Updated**: 2026-08-15
+**Version**: v1.9.0 | **Last Updated**: 2026-08-16
 **Author**: Manfred Koroschetz/AI
 **License**: SPDX-License-Identifier: MIT
 
 ## Changelog
+- v1.10.0 (2026-08-16): **Host-level restore wrapper `aspa_restore.sh`** (v1.1.1) — restore without shelling into the container: stop → start → run the backup's `utilities/pg_restore.sh` over TCP (auto-detects the published host port, e.g. dev 5434) → restart so pgagent re-registers fresh. Installed on dev and tested end-to-end (2026-08-17-manual → postgres17: all DBs restored, pgagent reconciled — 0 orphaned jobagentids, sequence synced). `pg_backup.sh` v1.6.0 copies the wrapper into `<backup>/IOTstack/` (self-contained, portable). `pg_restore.sh` v2.4.1: config `PORT` support + `${VAR:-}` guards for minimal configs. `entrypoint.sh` v1.2.0: **fast shutdown (SIGINT)** — SIGTERM is a smart shutdown that hangs on active connections past docker stop's 10s grace (SIGKILL + crash recovery on every stop); now clean ~0.4s shutdowns (verified on dev). See A.5b.
+- v1.9.0 (2026-08-16): **Locale decision — cluster is now 100% en_US.utf8** (prod is en_US.utf8 everywhere incl. templates; dev re-inited to match). The old dev cluster was init'd with C.UTF-8 default, so early objects (6 indexes across aspadb/aspadb-temp/aspadb2023) got pinned to `COLLATE "C.UTF-8"`; those were rebuilt with en_US.utf8 on dev AND prod (prod: aspadb 2 + aspadb2023 3). `pg_restore.sh` v2.1.0 now **automates** the normalization: temp-register collation (init-pgagent.sh) → restore → rebuild C.UTF-8 indexes with en_US.utf8 → drop collation (step [4/5]). Compose v2.0.3: `POSTGRES_INITDB_ARGS=--locale=en_US.utf8`. Config handling: pg_hba.conf ACTIVATED on restore; postgresql.conf/auto.conf REFERENCE-ONLY (never written to PGDATA; auto.conf is ALTER SYSTEM-managed). A.1–A.7 executed on dev (restore verified: inventory 61,675/73,798).
+- v1.8.8 (2026-08-16): A.4 locale fix — the cluster MUST be initialized with `POSTGRES_INITDB_ARGS=--locale=C.UTF-8` (matches old dev locale); without it the dump's `COLLATE "C.UTF-8"` indexes fail ("collation does not exist"). Baked into `docker-compose.target-postgres.yml` v2.0.2. *(Superseded by v1.9.0 — en_US.utf8 everywhere + normalization.)*
+- v1.8.7 (2026-08-16): `pg_restore.sh` v2.0.3 — fixed the **NO_CREATE leak** (per-DB restores failed with "database does not exist" because `--no-create` stayed set after the postgres DB restore); postgres restore now drops the container's fresh pgagent first when the dump carries it, so old pgagent schedules restore without FK conflicts.
+- v1.8.6 (2026-08-16): Post-cutover cron note in A.9 — the postgres17 container has no host socket mount, so `pg_maintenance.sh`/`pg_backup.sh` must run via `docker exec -u postgres` (in-container). `pg_maintenance.sh` v1.2.0 + `pg_restore.sh` v2.0.2 force the unix socket inside containers (`/.dockerenv`).
+- v1.8.5 (2026-08-16): `pg_restore.sh` v2.0.1 — fixed unbound `NO_OWNER`/`NO_PRIVILEGES` crash (`set -u`); defaults tuned so the real-world same-host restore is plain `./pg_restore.sh ..` (no flags — drop-first + owners/privileges restored via globals). A.5 updated accordingly; `--no-owner --no-privileges` are cross-host (prod→dev) only.
+- v1.8.4 (2026-08-16): **Merged `restore-cluster.sh` into `pg_restore.sh` v2.0.0** — one restore tool, one name (the old pair was contradictory/confusing). A.5/B.5 rewritten for the **container-shell workflow**: shell into the container as `postgres`, `cd` to the backup's `utilities/` folder (tooling + `.pgpass` already there — no `docker cp` of the scripts dir), run `./pg_restore.sh ..`. `pg_backup.sh` v1.3.1 / `pg_backup_rotated.sh` no longer copy `restore-cluster.sh` into `utilities/`.
+- v1.8.3 (2026-08-16): Rewrote **B.7 as fallback-only** (mirrors A.7) — extensions come from the image + the `aspadb` dump (pg_dump emits `CREATE EXTENSION`), so a fresh restore needs no manual extension work. `pg_backup.sh` v1.3.0 now captures the live `postgresql.conf`/`postgresql.auto.conf`/`pg_hba.conf` into the backup dir `config/`; `pg_restore.sh` v2.0.0 stages them into the target `$PGDATA` as `*.restored` (review version-specific params, rename, restart) — production tuning is no longer a manual capture step. Removed the `/var/run/postgresql` socket mount from `docker-compose.target-postgres.yml` (v2.0.1) — it breaks side-by-side (lock-file Permission denied). Corrected §6 risk row: extensions ARE carried by the dump.
+- v1.8.2 (2026-08-16): Rewrote **A.9 as a rename-based cutover** — old `aspaDB` container is stopped + renamed `aspaDB-old`, the postgres17 service takes over the `aspaDB` name and `5432:5432` (no app `DATABASE_URL` change), with an explicit rollback path. Added `docker/iotstack/setup-postgres17.sh` scaffold (idempotent; copies credential templates + build files; checkpoint validation). Rewrote `docker/iotstack/docker-compose.target-postgres.yml` to the postgres17 plan — official `postgres:17.11` + pgagent in-container, versioned `PGDATA=/var/lib/postgresql/17/data`, side port 5434, healthcheck `pg_isready -U postgres -h localhost` (start_period 20s).
+- v1.8.1 (2026-08-15): Fixed `docker exec` commands in A.4–A.7 and B.4–B.7 — psql/restore now run as the **postgres OS user** (`docker exec -u postgres`, unix socket = peer auth; root would be rejected). A.5/B.5 now copy `/workbench/scripts` into the container first (the image does not contain it) and warn that the host-side alternative uses the host's pg_restore version. Side-container port changed **5433 → 5434** (5433 is occupied by `prkt-db` on the dev host). Backup dir is now **mounted** into the container at the neutral `/mnt/DB-Backup` instead of `docker cp` — host path is **environment-specific**: dev `/mnt/db/IOTstack/DB_Backup/`, prod `/mnt/data/aspadata/DB-Backup/` (disk layout differs between hosts).
 - v1.8.0 (2026-08-15): Backup/restore steps now use the **in-repo tooling** — `workbench/scripts/pg_backup.sh --verify` (A.1/B.1) and `restore-cluster.sh` (A.5/B.5) — instead of ad-hoc pg_dump; recorded freshest full backup **2026-08-11** in §5; updated system-reference §5.
 - v1.7.0 (2026-08-15): Added Mermaid diagrams — §2 Gantt schedule (phases, milestones, Feb 2027 deadline, Feb–Jun no-maintenance window), §3.1 stack-layer flowchart (replaces ASCII art), §8 Part A dev upgrade flow, §9.9 prod cutover flow with rollback branch.
 - v1.6.0 (2026-08-15): Added §2 Status Tracker — current status, phase checklist, milestone dates, and Execution History tables. Renumbered sections (§2→§3 … §11→§12); updated all cross-references.
@@ -54,8 +64,8 @@
 
 | Env | Phase | Status | Last updated | Next action |
 |-----|-------|--------|--------------|-------------|
-| Dev (Part A) | Phase 1 — planned | 🔲 Not started | 2026-08-15 | Run §5 inventory |
-| Prod (Part B) | Phase 2 — planned | 🔲 Not started | 2026-08-15 | Wait for dev to pass Phase 1 |
+| Dev (Part A) | Phase 1 — A.1–A.7 executed | 🟡 In progress | 2026-08-16 | A.8 regression vs 5432 |
+| Prod (Part B) | Phase 2 — planned | 🔲 Not started | 2026-08-16 | Wait for dev to pass Phase 1 |
 
 ### Phase checklist
 
@@ -114,16 +124,16 @@ gantt
 
 | Step | Date | Executed by | Deviations | Result | Notes |
 |------|------|-------------|------------|--------|-------|
-| *(planned)* A.1 backup | | | | | |
-| *(planned)* A.2 container config | | | | | |
-| *(planned)* A.3 build image | | | | | |
-| *(planned)* A.4 side container + locale | | | | | |
-| *(planned)* A.5 restore | | | | | |
-| *(planned)* A.6 integrity check | | | | | |
-| *(planned)* A.7 extensions/config | | | | | |
-| *(planned)* A.8 regression | | | | | |
-| *(planned)* A.9 cutover | | | | | |
-| *(planned)* A.10 retire old | | | | | |
+| A.1 backup | 2026-08-16 | Manfred/AI | Ran twice: `2026-08-16` (pre-upgrade-dev) + `2026-08-16-manual` (user-tested) | ✅ | Both carry `config/` (pg_hba.conf + postgresql.conf + postgresql.auto.conf) |
+| A.2 container config | 2026-08-16 | Manfred/AI | Old aspaDB container inspected; pg_hba `host all all all md5` captured | ✅ | |
+| A.3 build image | 2026-08-16 | Manfred/AI | `aspadb-postgres:17` rebuilt; localedef line added; pgagent.control verified | ✅ | |
+| A.4 side container + locale | 2026-08-16 | Manfred/AI | Compose v2.0.3: `--locale=en_US.utf8` (was C.UTF-8); cluster re-inited; templates + postgres = en_US.utf8 | ✅ | Matches prod exactly |
+| A.5 restore | 2026-08-16 | Manfred/AI | Restored from `2026-08-16-manual`; all 8 DBs; pg_hba ACTIVATED; C.UTF-8 indexes auto-normalized (pg_restore.sh v2.1.0 step [4/5]) | ✅ | Inventory 61,675/73,798 intact |
+| A.6 integrity check | 2026-08-16 | Manfred/AI | 85 tables aspa; schemas public/tax_reports/winery; roles mkoroschetz/reporter/grafana_user; pgagent 4.2 (7 jobs, 11 schedules); pg_stat_statements 1.11 | ✅ | Counts match old cluster |
+| A.7 extensions/config | 2026-08-16 | Manfred/AI | pg_hba ACTIVATED on restore; postgresql.conf/auto.conf reference-only; C.UTF-8 collation dropped everywhere (0 refs) | ✅ | Prod: 5 indexes rebuilt with en_US.utf8 (aspadb 2, aspadb2023 3) |
+| A.8 regression | | | | | |
+| A.9 cutover | | | | | |
+| A.10 retire old | | | | | |
 | *(planned)* B.1 pre-flight backup | | | | | |
 | *(planned)* B.2 new host + Docker pin | | | | | |
 | *(planned)* B.3 deploy image | | | | | |
@@ -188,7 +198,7 @@ Each service/app container upgrade plan MUST satisfy these contracts before/afte
 | 1 | **PG 17 client/driver compatibility** | All app DB drivers/clients (psycopg, JDBC, PDO, node-postgres, etc.) must support PG 17 wire protocol + behave under PG 17. Verify per-container in its own plan | App regression §A.8 / §B.8 |
 | 2 | **Same Docker Engine/Compose version** | Containers must run on the pinned host Docker version (§7). No container plan may assume a newer/older engine | Host provisioning §B.2 |
 | 3 | **Image provenance** | App images must be built on a Debian 13 base (or a base explicitly compatible with the target host) and pulled from the project registry/tag | Per app plan |
-| 4 | **Connection/DNS changes** | On prod cutover (§B.9), app containers must point at the new PG endpoint (host:5433→5432). Each plan must expose where its `DATABASE_URL`/env is set | §B.9 cutover |
+| 4 | **Connection/DNS changes** | On prod cutover (§B.9), app containers must point at the new PG endpoint (host:5434→5432). Each plan must expose where its `DATABASE_URL`/env is set | §B.9 cutover |
 | 5 | **Schema compatibility** | No app plan may run DDL (schema/data migrations) against `aspadb` *during* the plumbing migration window (A.5–A.9 / B.5–B.9) | Scheduling (A/B) |
 | 6 | **Read-only access during migration** | `reporter`/`grafana_user` access patterns must keep working post-upgrade; app plans must not rely on superuser access | §A.6 / §B.6 |
 
@@ -270,11 +280,11 @@ docker info --format '{{.ServerVersion}} | {{.Driver}}'
 **Dev baseline recorded 2026-08-15:** Docker Engine **29.3.0** (build 5927d80) · Docker Compose **v5.1.0** · Server **29.3.0** · driver **overlay2** · data root `/mnt/docker-data`. Prod must match these exactly (B.2).
 
 **Known constraints (from project technical domain):**
-- Locale: prod `en_US.utf8` / `libc`; dev `C.UTF-8`. **The new cluster MUST reuse the old locale/provider** — otherwise restored text sorts differently (top collation risk in this upgrade).
+- Locale: **en_US.utf8 / libc everywhere** (prod AND dev, all DBs + templates). The old dev cluster was init'd with C.UTF-8, leaving 6 indexes pinned to `COLLATE "C.UTF-8"` (aspadb 2, aspadb-temp 1, aspadb2023 3) — **rebuilt with en_US.utf8 on dev and prod** (2026-08-16). Old dumps still carry the C.UTF-8 refs; `pg_restore.sh` v2.1.0 normalizes them automatically (step [4/5]).
 - Roles: `mkoroschetz` (superuser), `reporter` (read-only), `grafana_user` (monitoring).
 - Extensions: `pg_stat_statements` (shared_preload), `pgagent` (job scheduling).
-- Backup tooling (in-repo, `workbench/scripts/`): `pg_backup.sh` (+ rotated variant), `pg_restore.sh`, `restore-cluster.sh`, config `pg_backup.config`. Restore order: **globals → postgres → aspadb** (per `restore-cluster.sh`).
-- Backup cadence: crontab `6 4 * 2,6 *` (Feb + Jun) on the DB host. **Freshest full backup available: 2026-08-11** (refined scripts, logged in `workbench/scripts/log/pg_backup.log`).
+- Backup tooling (in-repo, `workbench/scripts/`): `pg_backup.sh` (+ rotated variant), `pg_restore.sh` (single restore tool — cluster + single-DB), `aspa_restore.sh` (host-level restore wrapper — stop/start/restore/restart, no container shell needed; §A.5b), config `pg_backup.config`. Restore order: **globals → postgres → aspadb** (per `pg_restore.sh`).
+- Backup cadence: crontab `6 4 * 2,6 *` (Feb + Jun) on the DB host. **Freshest full backup available: 2026-08-16** (`2026-08-16-manual`, restored + verified on dev).
 - **Docker version sync:** both Docker hosts must run the **same Docker Engine + Compose version** and the same storage driver. Dev and prod must stay pinned to one version until both are validated, then move together (see §7, B.2).
 
 ---
@@ -283,9 +293,9 @@ docker info --format '{{.ServerVersion}} | {{.Driver}}'
 
 | Risk | Impact | Mitigation |
 |------|--------|-----------|
-| Locale/encoding mismatch (en_US.utf8 vs C.UTF-8) | Wrong collation / sort order on restored data | Verify `SHOW lc_collate` on new cluster matches old; restore to a cluster with identical locale (§A.4 / §B.4) |
+| Locale/encoding mismatch (en_US.utf8 vs C.UTF-8) | Wrong collation / sort order on restored data | Cluster init'd with **en_US.utf8** (matches prod); old dumps' `COLLATE "C.UTF-8"` indexes auto-normalized by `pg_restore.sh` v2.1.0 (step [4/5]); verify `SHOW lc_collate` = en_US.utf8 (§A.4 / §B.4) |
 | `public` schema permission change (PG 15+) | Apps assuming world-writable `public` break | Already hardened (`REVOKE CREATE ON public`); verify after restore |
-| Extensions (`pg_stat_statements`, `pgagent`) not carried by dump | Monitoring/jobs missing | Recreate extensions in PG 17 (§A.7 / §B.7); reconcile shared_preload_libraries |
+| Extensions (`pg_stat_statements`, `pgagent`) not carried by dump | Monitoring/jobs missing | **Carried by the dump** — pg_dump emits `CREATE EXTENSION`; `shared_preload_libraries` + tuning baked into the image entrypoint (v1.1.0); fallback steps in §A.7/§B.7 |
 | `reporter`/`grafana_user` grants lost | Analytics breaks | `pg_dumpall --globals-only` covers roles; re-grant/verify §A.6 / §B.8 |
 | Soft-delete convention (`deleted = false`) | Regression queries returning soft-deleted rows | Part of app regression suite (§A.8) |
 | Stale backups (crontab Feb + June) | Restore may be months old | Take a **fresh backup immediately** before upgrade (step A.1 / B.1) |
@@ -319,7 +329,7 @@ PROD: Docker host Debian 10.13 (EOL) ──► NEW Docker host Debian 13 ──�
 flowchart LR
     A1["A.1 Fresh backup"] --> A2["A.2 Record config"]
     A2 --> A3["A.3 Build image<br/>debian:13 + PG 17"]
-    A3 --> A4["A.4 Side container :5433"]
+    A3 --> A4["A.4 Side container :5434"]
     A4 --> A5["A.5 Restore dump"]
     A5 --> A6["A.6 Integrity check"]
     A6 --> A7["A.7 Extensions / config"]
@@ -334,15 +344,17 @@ flowchart LR
 
 ### A.1 — Fresh backup (mandatory, even in dev)
 
-Use the **in-repo backup tooling** (`workbench/scripts/pg_backup.sh`), which produces `globals.sql.gz` + per-DB `.custom`/`.sql.gz` in a dated dir and is verified by `restore-cluster.sh`. The freshest full backup is **2026-08-11**; still run a fresh one now.
+Use the **in-repo backup tooling** (`workbench/scripts/pg_backup.sh`), which produces `globals.sql.gz` + per-DB `.custom`/`.sql.gz` in a dated dir and is verified by `pg_restore.sh`. The freshest full backup is **2026-08-11**; still run a fresh one now.
+
+> **Backup mount note:** `/mnt/DB-Backup` is the **neutral in-container mount point** for backup/restore. The **host path differs per environment** — dev uses `/mnt/db/IOTstack/DB_Backup` (below); prod uses a different path (see B.1).
 
 ```bash
 # on the Docker host, in workbench/scripts (or wherever pg_backup.sh is deployed)
 ./pg_backup.sh -m pre-upgrade-dev --verify
 # produces: <date>-pre-upgrade-dev/globals.sql.gz + aspadb.custom + aspadb.sql.gz (+ postgres DB)
 # copy off-host: host + container + external dual copy
-scp -r /mnt/data/aspadata/DB-Backup/*-pre-upgrade-dev/ backup@remote:/backup/
-ls -lh /mnt/data/aspadata/DB-Backup/*-pre-upgrade-dev/   # globals.sql.gz + aspadb.custom non-empty
+scp -r /mnt/db/IOTstack/DB_Backup/*-pre-upgrade-dev/ backup@remote:/backup/
+ls -lh /mnt/db/IOTstack/DB_Backup/*-pre-upgrade-dev/   # globals.sql.gz + aspadb.custom non-empty
 ```
 
 ✅ **CHECKPOINT A.1:** backup dir dated today with `globals.sql.gz` + `aspadb.custom` non-empty; `--verify` passed (`pg_restore -l` OK); `globals.sql.gz` contains `mkoroschetz`, `reporter`, `grafana_user`; copied off-host.
@@ -371,83 +383,210 @@ docker build -t aspadb-postgres:17 .
 
 ✅ **CHECKPOINT A.3:** image builds cleanly; `docker run --rm aspadb-postgres:17 pg_config --version` → **17.11**; image base reports Debian 13.
 
-### A.4 — Run new container on a side port (5433)
+### A.4 — Run new container on a side port (5434)
+
+> **Locale:** the cluster is initialized with **en_US.utf8** — matching prod
+> (all DBs AND templates are en_US.utf8 there). Pass
+> `POSTGRES_INITDB_ARGS=--locale=en_US.utf8` (compose: `docker-compose.target-postgres.yml`
+> v2.0.3 has it baked in). The old dev cluster's C.UTF-8 default left 6 indexes
+> pinned to `COLLATE "C.UTF-8"` in the dumps — `pg_restore.sh` v2.1.0 handles
+> those automatically (temp-register collation → restore → rebuild with en_US.utf8
+> → drop collation, step [4/5]). If the container was already started with a
+> different locale, wipe the fresh data dir and recreate.
 
 ```bash
 docker run -d --name pg17 \
   -e POSTGRES_PASSWORD='***' \
-  -p 5433:5432 \
+  -e POSTGRES_INITDB_ARGS='--locale=en_US.utf8' \
+  -p 5434:5432 \
+  -v /mnt/db/IOTstack/DB_Backup:/mnt/DB-Backup \
   --restart unless-stopped \
   aspadb-postgres:17
 # verify
 docker exec pg17 cat /etc/debian_version          # 13.x
-docker exec pg17 psql -U postgres -c "SELECT version();"
-docker exec pg17 psql -U postgres -c "SHOW lc_collate; SHOW lc_ctype; SHOW server_encoding;"
+docker exec -u postgres pg17 psql -U postgres -c "SELECT version();"
+docker exec -u postgres pg17 psql -U postgres -c "SHOW lc_collate; SHOW lc_ctype; SHOW server_encoding;"
 ```
 
-✅ **CHECKPOINT A.4:** new container runs on **5433** (old stays on 5432 — zero risk); `version()` = 17.11; locale/encoding recorded (should match old: dev `C.UTF-8`/`UTF8`).
+✅ **CHECKPOINT A.4:** new container runs on **5434** (old stays on 5432 — zero risk); `version()` = 17.11; `lc_collate`/`lc_ctype` = `en_US.utf8`, `server_encoding` = `UTF8` (must match prod).
 
 ### A.5 — Restore into new container (order: globals → postgres → aspadb)
 
-Use the **in-repo restore tooling** (`workbench/scripts/restore-cluster.sh`), which restores globals → postgres → every DB in the correct order, then runs ANALYZE/VACUUM. For dev transfer use `--no-owner --no-privileges` (prod→dev roles/owners differ).
+Everything runs from **inside the container shell** — the backup dir is mounted
+at `/mnt/DB-Backup` and already contains the restore tooling in
+`<backup>/utilities/` (`pg_backup.sh` copies `pg_restore.sh`, `pg_backup.config`
+and `.pgpass` there). No `docker cp` of the whole scripts dir needed.
 
 ```bash
-# copy the backup dir into the new container (or run the restore from the host against 5433)
-docker cp <date>-pre-upgrade-dev pg17:/tmp/
-docker exec pg17 /workbench/scripts/restore-cluster.sh /tmp/<date>-pre-upgrade-dev/ --no-owner --no-privileges
-# or, from the host, point pg_restore.sh at the side port:
-./workbench/scripts/pg_restore.sh -a /mnt/data/aspadata/DB-Backup/<date>-pre-upgrade-dev/ -c <config-dev5433>
+# 1) shell into the new container AS the postgres OS user (unix socket = peer
+#    auth; root would be rejected)
+docker exec -it -u postgres postgres17 bash
+# 2) the backup dir is mounted at /mnt/DB-Backup - go to its utilities folder
+cd /mnt/DB-Backup/<date>-pre-upgrade-dev/utilities/
+# 3) refresh the tooling copies from the repo (optional but recommended):
+#    docker cp workbench/scripts/pg_restore.sh .        # repeat for pg_backup.config
+# 4) run the cluster restore — the backup dir is the parent of utilities/
+#    (same-host restore needs NO flags: drop-first + owners/privileges come
+#    from the globals step; --no-owner --no-privileges are CROSS-HOST only)
+./pg_restore.sh ..
 ```
 
-✅ **CHECKPOINT A.5:** `restore-cluster.sh` reports success; `aspadb` DB exists owned by `mkoroschetz`; `reporter`/`grafana_user` roles present; ANALYZE/VACUUM pass ran.
+> NOTE: `pg_restore.sh` is the single restore tool (cluster + single-DB modes);
+> the old `restore-cluster.sh` was merged into it (v2.0.0). It restores
+> globals → postgres → every DB in order, then ANALYZE/VACUUM, then **normalizes
+> legacy C.UTF-8 collation usage** (step [4/5]: rebuilds any `COLLATE "C.UTF-8"`
+> indexes with en_US.utf8 and drops the collation — no-op on clean dumps), then
+> stages the backup's `config/` (pg_hba.conf ACTIVATED; postgresql.conf/auto.conf
+> reference-only).
+
+✅ **CHECKPOINT A.5:** `pg_restore.sh` reports success; `aspadb` DB exists owned by `mkoroschetz`; `reporter`/`grafana_user` roles present; ANALYZE/VACUUM pass ran; no `COLLATE "C.UTF-8"` references remain in any DB.
+
+### A.5b — Host-level restore (aspa_restore wrapper, no container shell)
+
+The container-shell workflow above is the manual path. For a **one-command
+restore from the Docker host**, use the `aspa_restore` wrapper (the restore
+counterpart of `aspa_backup`). It manages the container lifecycle around
+`pg_restore.sh`:
+
+1. `docker stop <container>` — postgres + pgagent stop cleanly (pgagent stop is
+   implicit: it runs inside the container; entrypoint v1.2.0 does a **fast
+   shutdown** so docker stop never escalates to SIGKILL)
+2. `docker start <container>` — pg_restore needs a live server
+3. Runs the backup's `utilities/pg_restore.sh` over TCP (auto-detects the
+   published host port, e.g. dev 5434; `--skip-pgagent-restart` — the wrapper
+   owns the container restart)
+4. `docker restart <container>` — pgagent re-registers with a fresh jagid
+
+**One-time setup (per host — prod and dev):**
+
+```bash
+# next to docker-compose.yml, like aspa_backup (symlink or copy)
+cp workbench/scripts/aspa_restore.sh /root/IOTstack/aspa_restore
+cp workbench/scripts/pg_restore.sh  /root/IOTstack/pg_restore.sh
+chmod +x /root/IOTstack/aspa_restore /root/IOTstack/pg_restore.sh
+```
+
+**Usage:**
+
+```bash
+# container name: aspadb (final) > aspaDB (compose historical) > ASPA_RESTORE_CONTAINER env
+ASPA_RESTORE_CONTAINER=postgres17 /root/IOTstack/aspa_restore /mnt/db/IOTstack/DB-Backup/2026-08-17-manual
+```
+
+Notes:
+- The wrapper prefers the backup's own `utilities/pg_restore.sh` (needs v2.3.0+,
+  i.e. made by `pg_backup.sh` v1.5.0+); older backups fall back to the local copy.
+- `pg_backup.sh` v1.6.0 copies `aspa_restore` into `<backup>/IOTstack/` (`cp -fL`
+  resolves the host symlink), so every backup is self-contained and portable.
+- The wrapper's temp config does not set `PGDATA_TARGET`, so config staging
+  (pg_hba.conf activation) is skipped with a warning — data restore + pgagent
+  reconciliation are the wrapper's scope.
+- Verified on dev (2026-08-16): full restore of `2026-08-17-manual` into
+  `postgres17` — all DBs restored, pgagent reconciled (0 orphaned jobagentids,
+  `pga_joblog_jlgid_seq` synced, 7 jobs unclaimed for re-registration).
 
 ### A.6 — Verify data integrity on PG 17
 
 ```bash
-docker exec pg17 psql -U postgres -d aspadb -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='aspa';"
-docker exec pg17 psql -U postgres -d aspadb -c "SELECT nspname FROM pg_namespace ORDER BY 1;"
-docker exec pg17 psql -U postgres -d aspadb -c "SELECT rolname FROM pg_roles WHERE rolname IN ('mkoroschetz','reporter','grafana_user') ORDER BY 1;"
-docker exec pg17 psql -U postgres -d aspadb -c "SELECT count(*) FROM aspa.inventory WHERE deleted = false;"
+docker exec -u postgres pg17 psql -U postgres -d aspadb -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='aspa';"
+docker exec -u postgres pg17 psql -U postgres -d aspadb -c "SELECT nspname FROM pg_namespace ORDER BY 1;"
+docker exec -u postgres pg17 psql -U postgres -d aspadb -c "SELECT rolname FROM pg_roles WHERE rolname IN ('mkoroschetz','reporter','grafana_user') ORDER BY 1;"
+docker exec -u postgres pg17 psql -U postgres -d aspadb -c "SELECT count(*) FROM aspa.inventory WHERE deleted = false;"
 ```
 
 ✅ **CHECKPOINT A.6:** 85 tables in `aspa`; schemas `public`, `tax_reports`, `winery` present; all 3 roles exist; inventory row count matches pre-upgrade value (recorded in §5).
 
 ### A.7 — Extensions & config reconciliation
 
+The postgres17 image preloads `pg_stat_statements` from first boot (entrypoint
+passes `-c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.max=10000
+-c pg_stat_statements.track=all`; the `.so` ships in `postgres:17.11` contrib) and
+`init-pgagent.sh` creates both extensions automatically. The steps below are the
+**fallback** for an already-running container (e.g. one started before v1.1.0):
+
 ```bash
-docker exec pg17 psql -U postgres -d aspadb -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
-docker exec pg17 psql -U postgres -d aspadb -c "CREATE EXTENSION IF NOT EXISTS pgagent;"
-# apply pg_stat_statements shared_preload, then restart:
-docker exec pg17 bash -c "echo \"shared_preload_libraries='pg_stat_statements'\" >> /etc/postgresql/17/main/postgresql.conf"
-docker exec pg17 psql -U postgres -d aspadb -c "ALTER SYSTEM SET shared_preload_libraries='pg_stat_statements';"
+docker exec -u postgres pg17 psql -U postgres -d aspadb -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+docker exec -u postgres pg17 psql -U postgres -d aspadb -c "CREATE EXTENSION IF NOT EXISTS pgagent;"
+# apply pg_stat_statements shared_preload + tuning, then restart:
+docker exec -u postgres pg17 psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries='pg_stat_statements';"
+docker exec -u postgres pg17 psql -U postgres -c "ALTER SYSTEM SET pg_stat_statements.max=10000;"
+docker exec -u postgres pg17 psql -U postgres -c "ALTER SYSTEM SET pg_stat_statements.track='all';"
 docker restart pg17
-docker exec pg17 psql -U postgres -c "SHOW shared_preload_libraries;"
+docker exec -u postgres pg17 psql -U postgres -c "SHOW shared_preload_libraries;"
 ```
+
+> NOTE: `ALTER SYSTEM` writes `postgresql.auto.conf` (image-agnostic). Do NOT
+> append to `/etc/postgresql/17/main/postgresql.conf` — that path is Debian-layout
+> only and does not exist in the official `postgres:17.11` image (config lives at
+> `$PGDATA/postgresql.conf`).
+>
+> **Config handling (v2.0.5+):** `pg_restore.sh` ACTIVATES the backup's
+> `pg_hba.conf` (app-consistency critical, version-portable). `postgresql.conf`
+> and `postgresql.auto.conf` are **reference-only** — kept in the backup's
+> `config/` for post-upgrade tuning comparison, NEVER written into PGDATA
+> (postgresql.auto.conf is auto-managed by `ALTER SYSTEM`; never hand-edit it).
 
 ✅ **CHECKPOINT A.7:** `\dx` shows pg_stat_statements + pgagent; `SHOW shared_preload_libraries;` → `pg_stat_statements`; performance tuning carried over from A.2.
 
-### A.8 — Full regression against dev apps (port 5433)
+### A.8 — Full regression against dev apps (port 5434)
 
-Run the entire workbench/query suite and app smoke tests **against the new container on 5433**:
+Run the entire workbench/query suite and app smoke tests **against the new container on 5434**:
 ```bash
-workbench/scripts/run.sh -e dev -p 5433 query.sql     # repeat for schema-analysis/*.sql and app calls
-psql -h 192.168.100.32 -p 5433 -U reporter -d aspadb -c "SELECT count(*) FROM aspa.inventory WHERE deleted = false;"
-psql -h 192.168.100.32 -p 5433 -U grafana_user -d aspadb -c "SELECT 1;"   # monitoring user works
+workbench/scripts/run.sh -e dev -p 5434 query.sql     # repeat for schema-analysis/*.sql and app calls
+psql -h 192.168.100.32 -p 5434 -U reporter -d aspadb -c "SELECT count(*) FROM aspa.inventory WHERE deleted = false;"
+psql -h 192.168.100.32 -p 5434 -U grafana_user -d aspadb -c "SELECT 1;"   # monitoring user works
 ```
 
 ✅ **CHECKPOINT A.8:** all queries return identical results vs. old-container (5432) baseline; `reporter` + `grafana_user` authenticate; pgagent schedules run.
 
-### A.9 — Cut over: switch app to PG 17 container
+### A.9 — Cut over: switch app to PG 17 container (rename-based)
+
+The old PG 12 container (`aspaDB`) is **stopped but never deleted**; it is
+renamed to `aspaDB-old` so the new PG 17 container can take over the `aspaDB`
+name, the `5432:5432` port, and the app's existing `DATABASE_URL` unchanged.
+Rollback is a rename back + restart (below).
 
 ```bash
-# stop old container (do NOT delete yet)
-docker stop <pg-container>
-# update the app / .env.dev DATABASE_URL / compose service to point at pg17 on 5433 (or remap to 5432)
-# example: docker compose service image aspadb-postgres:17, ports 5433:5432
-# adjust run.sh -e dev profile port accordingly
+# 1) stop the old PG 12 container (do NOT delete - rollback path)
+docker compose stop postgres
+
+# 2) rename it out of the way (old data volume stays untouched)
+docker rename aspaDB aspaDB-old
+
+# 3) edit docker-compose.yml:
+#    - postgres17 service: container_name: aspaDB, ports: "5432:5432"
+#    - comment out the old postgres service block (keep it for rollback)
+#    - app DATABASE_URL / run.sh -e dev port stay on 5432 - no app change
+
+# 4) start the new PG 17 container under the aspaDB name
+docker compose up -d postgres17
+
+# 5) verify
+docker ps
+docker exec -u postgres aspaDB psql -c 'select version();'   # expect 17.11
 ```
 
-✅ **CHECKPOINT A.9:** app connects to PG 17 container; end-to-end flow works; no errors in application logs; old container stopped but intact.
+**Rollback (any failure):**
+```bash
+docker compose stop postgres17
+docker rename aspaDB-old aspaDB
+# restore the old postgres service block in docker-compose.yml (uncomment)
+docker compose up -d postgres
+```
+
+✅ **CHECKPOINT A.9:** `docker ps` shows `aspaDB` (PG 17) on 5432 and `aspaDB-old` stopped; `select version();` → 17.11; end-to-end flow works; no errors in application logs; old container stopped but intact.
+
+> **Post-cutover cron change (IMPORTANT):** the postgres17 container has **no
+> host socket mount** (removed in compose v2.0.1 — it broke side-by-side), so
+> host-side `pg_maintenance.sh` / `pg_backup.sh` can no longer reach the DB via
+> `/var/run/postgresql`. Update the host crontab to run them **inside the
+> container** (peer auth as `postgres`):
+> ```bash
+> 8 2 * * * docker exec -u postgres aspaDB /mnt/DB-Backup/pg_maintenance.sh
+> 6 4 * 2,6 * docker exec -u postgres aspaDB /mnt/DB-Backup/pg_backup.sh --verify
+> ```
+> (`pg_maintenance.sh` v1.2.0 + `pg_restore.sh` v2.0.2 force the unix socket
+> when running inside a container — `/.dockerenv` detection.)
 
 ### A.10 — Retire old container (after 1 week soak)
 
@@ -466,7 +605,9 @@ docker rmi <old-image>          # remove Debian-11/PG12 image after confirmed st
 
 ### B.1 — Full pre-flight backup (do NOT skip)
 
-Use the **in-repo backup tooling** (`workbench/scripts/pg_backup.sh`) — same script as dev. It produces `globals.sql.gz` + per-DB `.custom`/`.sql.gz` in a dated dir and self-verifies with `--verify`. Restore is done by `restore-cluster.sh`.
+Use the **in-repo backup tooling** (`workbench/scripts/pg_backup.sh`) — same script as dev. It produces `globals.sql.gz` + per-DB `.custom`/`.sql.gz` in a dated dir and self-verifies with `--verify`. Restore is done by `pg_restore.sh`.
+
+> **Backup mount note:** `/mnt/DB-Backup` is the **neutral in-container mount point** for backup/restore. The **host path differs per environment** — dev uses `/mnt/db/IOTstack/DB_Backup`, prod uses `/mnt/data/aspadata/DB-Backup` (disk-space layout differs between hosts).
 
 ```bash
 # 1) fresh full backup via the in-repo tool (from the DB host or via docker exec)
@@ -512,66 +653,102 @@ docker images | grep aspadb-postgres         # confirm tag aspadb-postgres:17
 
 ✅ **CHECKPOINT B.3:** image `aspadb-postgres:17` present; same image digest as dev (build once, reuse in both envs — zero divergence).
 
-### B.4 — Run new container on side port (5433) + verify locale
+### B.4 — Run new container on side port (5434) + verify locale
 
 ```bash
 docker run -d --name pg17 \
   -e POSTGRES_PASSWORD='***' \
-  -p 5433:5432 \
+  -e POSTGRES_INITDB_ARGS='--locale=en_US.utf8' \
+  -p 5434:5432 \
+  -v /mnt/data/aspadata/DB-Backup:/mnt/DB-Backup \
   --restart unless-stopped \
   aspadb-postgres:17
 # verify
 docker exec pg17 cat /etc/debian_version          # 13.x
-docker exec pg17 psql -U postgres -c "SELECT version();"
-docker exec pg17 psql -U postgres -c "SHOW lc_collate; SHOW lc_ctype; SHOW server_encoding;"
+docker exec -u postgres pg17 psql -U postgres -c "SELECT version();"
+docker exec -u postgres pg17 psql -U postgres -c "SHOW lc_collate; SHOW lc_ctype; SHOW server_encoding;"
 ```
 
-✅ **CHECKPOINT B.4:** new container on **5433** (old untouched on 5432); `version()` = **17.11**; locale/encoding recorded and must match old prod (`en_US.utf8`/`UTF8`). If locale differs → re-init the data dir with `locale-gen` + re-initdb before restore.
+✅ **CHECKPOINT B.4:** new container on **5434** (old untouched on 5432); `version()` = **17.11**; locale/encoding recorded and must match old prod (`en_US.utf8`/`UTF8`). If locale differs → re-init the data dir with `locale-gen` + re-initdb before restore.
 
 ### B.5 — Restore into new container (order: globals → postgres → aspadb)
 
-Use the **in-repo restore tooling** (`workbench/scripts/restore-cluster.sh`) — same tool as dev. Same-host prod restore keeps owners/privileges (no `--no-owner`/`--no-privileges`).
+Same container-shell workflow as dev (A.5) — the backup dir is mounted at
+`/mnt/DB-Backup` and its `utilities/` folder already contains the restore
+tooling. Same-host prod restore keeps owners/privileges (no
+`--no-owner`/`--no-privileges`). **Alternatively use the host-level
+`aspa_restore` wrapper (A.5b) — one command, no container shell.**
 
 ```bash
-# copy the backup dir into the new container, then restore the full cluster
-docker cp <date>-pre-upgrade-prod pg17:/tmp/
-docker exec pg17 /workbench/scripts/restore-cluster.sh /tmp/<date>-pre-upgrade-prod/
-# or, from the new host, point pg_restore.sh at the side port:
-./workbench/scripts/pg_restore.sh -a /mnt/data/aspadata/DB-Backup/<date>-pre-upgrade-prod/ -c <config-prod5433>
+# 1) shell into the new container AS the postgres OS user (unix socket = peer auth)
+docker exec -it -u postgres postgres17 bash
+# 2) go to the backup's utilities folder (mounted at /mnt/DB-Backup)
+cd /mnt/DB-Backup/<date>-pre-upgrade-prod/utilities/
+# 3) refresh the tooling copies from the repo (optional but recommended):
+#    docker cp workbench/scripts/pg_restore.sh .        # repeat for pg_backup.config
+# 4) run the cluster restore — the backup dir is the parent of utilities/
+./pg_restore.sh ..
 ```
 
-✅ **CHECKPOINT B.5:** `restore-cluster.sh` reports success; `aspadb` DB exists owned by `mkoroschetz`; roles + owners preserved (no `--no-owner`); ANALYZE/VACUUM pass ran.
+> NOTE: `pg_restore.sh` is the single restore tool (cluster + single-DB modes);
+> the old `restore-cluster.sh` was merged into it (v2.0.0).
+
+✅ **CHECKPOINT B.5:** `pg_restore.sh` reports success; `aspadb` DB exists owned by `mkoroschetz`; roles + owners preserved (no `--no-owner`); ANALYZE/VACUUM pass ran.
 
 ### B.6 — Data integrity verification on PG 17
 
 ```bash
-docker exec pg17 psql -U postgres -d aspadb -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='aspa';"
-docker exec pg17 psql -U postgres -d aspadb -c "SELECT nspname FROM pg_namespace ORDER BY 1;"
-docker exec pg17 psql -U postgres -d aspadb -c "SELECT rolname FROM pg_roles WHERE rolname IN ('mkoroschetz','reporter','grafana_user') ORDER BY 1;"
-docker exec pg17 psql -U postgres -d aspadb -c "SELECT count(*) FROM aspa.inventory WHERE deleted = false;"
+docker exec -u postgres pg17 psql -U postgres -d aspadb -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='aspa';"
+docker exec -u postgres pg17 psql -U postgres -d aspadb -c "SELECT nspname FROM pg_namespace ORDER BY 1;"
+docker exec -u postgres pg17 psql -U postgres -d aspadb -c "SELECT rolname FROM pg_roles WHERE rolname IN ('mkoroschetz','reporter','grafana_user') ORDER BY 1;"
+docker exec -u postgres pg17 psql -U postgres -d aspadb -c "SELECT count(*) FROM aspa.inventory WHERE deleted = false;"
 ```
 
 ✅ **CHECKPOINT B.6:** 85 tables in `aspa`; schemas `public`, `tax_reports`, `winery` present; all 3 roles exist; inventory row count matches pre-upgrade baseline (recorded in §5).
 
 ### B.7 — Extensions & config reconciliation
 
+The postgres17 image preloads `pg_stat_statements` from first boot (entrypoint
+passes `-c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.max=10000
+-c pg_stat_statements.track=all`; the `.so` ships in `postgres:17.11` contrib) and
+`init-pgagent.sh` creates both extensions automatically. The `aspadb` dump carries
+its own `CREATE EXTENSION` statements (pg_dump emits them), so a fresh restore
+needs **no manual extension work**. Production tuning is captured by `pg_backup.sh`
+(`config/` in the backup dir) and staged by `pg_restore.sh` into the target
+`$PGDATA` as `*.restored` — review version-specific params (PG12 → PG17), rename
+to activate, restart. The steps below are the **fallback** for an already-running
+container (e.g. one started before v1.1.0):
+
 ```bash
-docker exec pg17 psql -U postgres -d aspadb -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
-docker exec pg17 psql -U postgres -d aspadb -c "CREATE EXTENSION IF NOT EXISTS pgagent;"
-docker exec pg17 psql -U postgres -d aspadb -c "ALTER SYSTEM SET shared_preload_libraries='pg_stat_statements';"
+docker exec -u postgres pg17 psql -U postgres -d aspadb -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+docker exec -u postgres pg17 psql -U postgres -d aspadb -c "CREATE EXTENSION IF NOT EXISTS pgagent;"
+# apply pg_stat_statements shared_preload + tuning, then restart:
+docker exec -u postgres pg17 psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries='pg_stat_statements';"
+docker exec -u postgres pg17 psql -U postgres -c "ALTER SYSTEM SET pg_stat_statements.max=10000;"
+docker exec -u postgres pg17 psql -U postgres -c "ALTER SYSTEM SET pg_stat_statements.track='all';"
 docker restart pg17
-docker exec pg17 psql -U postgres -c "SHOW shared_preload_libraries;"
-# apply production tuning from old postgresql.conf (work_mem, shared_buffers, effective_cache_size…) via ALTER SYSTEM
+docker exec -u postgres pg17 psql -U postgres -c "SHOW shared_preload_libraries;"
 ```
 
-✅ **CHECKPOINT B.7:** `\dx` shows pg_stat_statements + pgagent; `SHOW shared_preload_libraries;` → `pg_stat_statements`; performance tuning matches old prod; pgagent schedules visible.
+> NOTE: `ALTER SYSTEM` writes `postgresql.auto.conf` (image-agnostic). Do NOT
+> append to `/etc/postgresql/17/main/postgresql.conf` — that path is Debian-layout
+> only and does not exist in the official `postgres:17.11` image (config lives at
+> `$PGDATA/postgresql.conf`).
+>
+> **Config handling (v2.0.5+):** `pg_restore.sh` ACTIVATES the backup's
+> `pg_hba.conf` (app-consistency critical, version-portable). `postgresql.conf`
+> and `postgresql.auto.conf` are **reference-only** — kept in the backup's
+> `config/` for post-upgrade tuning comparison, NEVER written into PGDATA
+> (postgresql.auto.conf is auto-managed by `ALTER SYSTEM`; never hand-edit it).
+
+✅ **CHECKPOINT B.7:** `\dx` shows pg_stat_statements + pgagent; `SHOW shared_preload_libraries;` → `pg_stat_statements`; production tuning staged from backup `config/` (reviewed + activated); pgagent schedules visible.
 
 ### B.8 — App + analytics regression (read-only first)
 
 ```bash
-workbench/scripts/run.sh -e prod -p 5433 query.sql     # app query suite against new container
-psql -h 172.20.61.220 -p 5433 -U reporter -d aspadb -c "SELECT count(*) FROM aspa.inventory WHERE deleted = false;"
-psql -h 172.20.61.220 -p 5433 -U grafana_user -d aspadb -c "SELECT 1;"
+workbench/scripts/run.sh -e prod -p 5434 query.sql     # app query suite against new container
+psql -h 172.20.61.220 -p 5434 -U reporter -d aspadb -c "SELECT count(*) FROM aspa.inventory WHERE deleted = false;"
+psql -h 172.20.61.220 -p 5434 -U grafana_user -d aspadb -c "SELECT 1;"
 # Compare row counts / checksums vs. pre-upgrade numbers recorded in B.1
 ```
 
@@ -581,7 +758,7 @@ psql -h 172.20.61.220 -p 5433 -U grafana_user -d aspadb -c "SELECT 1;"
 
 ```mermaid
 flowchart TB
-    B1["B.1–B.8 validated on new host :5433"] --> PREP["Point app DATABASE_URL / DNS / LB<br/>at new host :5433 (or remap 5432)"]
+    B1["B.1–B.8 validated on new host :5434"] --> PREP["Point app DATABASE_URL / DNS / LB<br/>at new host :5434 (or remap 5432)"]
     PREP --> STOP["docker stop old pg-container<br/>(do NOT delete)"]
     STOP --> TEST["End-to-end smoke: inventory,<br/>sorting, delivery, sales, CRM"]
     TEST -->|pass| B10["B.10 Quarantine old host 2–4 wks"]
@@ -592,7 +769,7 @@ flowchart TB
 ```
 
 ```bash
-# Update DATABASE_URL in app config / env / DNS / LB to point at new host:5433 (or remap to 5432)
+# Update DATABASE_URL in app config / env / DNS / LB to point at new host:5434 (or remap to 5432)
 # Point the app's other containers at the new PG container (docker network / compose)
 docker stop <pg-container>        # old container stopped — do NOT delete yet
 ```
@@ -614,7 +791,7 @@ docker stop <pg-container>        # old container stopped — do NOT delete yet
 |---|-------|-----|------|
 | 1 | `SELECT version();` → 17.11 | ☐ | ☐ |
 | 2 | Only PG 17 container running in both envs (after A.10 / B.10) | ☐ | ☐ |
-| 3 | Locale: en_US.utf8 / UTF8 / libc (prod), C.UTF-8 (dev) | ☐ | ☐ |
+| 3 | Locale: en_US.utf8 / UTF8 / libc (prod AND dev — all DBs + templates) | ☐ | ☐ |
 | 4 | 85 tables in `aspa`; schemas public/tax_reports/winery present | ☐ | ☐ |
 | 5 | Roles mkoroschetz/reporter/grafana_user + grants OK | ☐ | ☐ |
 | 6 | pg_stat_statements + pgagent loaded | ☐ | ☐ |

@@ -9,9 +9,9 @@
 #   - fresh host-persisted data dir volumes/postgres17/data (NOT the stale
 #     volumes/postgres/data, and NOT an anonymous docker volume)
 #   - dump/restore (globals -> postgres -> aspadb) into this dir BEFORE cutover;
-#     side-by-side first on :5433, then flip to :5432
+#     side-by-side first on :5434, then flip to :5432
 #
-# During side-by-side migration, run the same image with ports "5433:5432" and
+# During side-by-side migration, run the same image with ports "5434:5432" and
 # container_name pg17; after validate/cutover, aspaDB takes over 5432.
 
   postgres:
@@ -27,7 +27,7 @@
       - "5432:5432"
     volumes:
       - ./volumes/postgres17/data:/var/lib/postgresql/17/main
-      - /mnt/data/aspadata/DB-Backup:/mnt/DB-Backup
+      - /mnt/db/IOTstack/DB_Backup:/mnt/DB-Backup
       - /var/run/postgresql:/var/run/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -h /var/run/postgresql || exit 1"]

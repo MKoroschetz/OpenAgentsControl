@@ -52,9 +52,9 @@ source of truth — the live files are on the Docker hosts.
    while `volumes/pgadmin/` holds an older `pgadmin4.db`.
 4. **Existing `services/postgres/Dockerfile` is a *combined* postgres+pgagent**
    image (`FROM postgres:17`, installs pgagent). **Decision: adopt architecture C**
-   — the repo `docker/postgres/Dockerfile` (Debian 13 + PG 17 + pgagent, with
-   entrypoint running server + daemon) supersedes both the old combined file and
-   the earlier minimal sidecar experiment.
+   — `docker/iotstack/services/postgres17/Dockerfile` (official `postgres:17.11`
+   base + pgagent, with entrypoint running server + daemon) supersedes both the
+   old combined file and the earlier minimal sidecar experiment.
 
 ## Migration question — how to move the existing DB
 
@@ -67,10 +67,18 @@ tooling, per `docs/CORE-PLATFORM-UPGRADE.md` Part A):
 # 1. fresh backup from the LIVE cluster (over the socket/TCP, not the stale bind mount)
 ./workbench/scripts/pg_backup.sh -m pre-upgrade-dev --verify
 
-# 2. run the new postgres:17 container on a side port (5433) with a NEW data dir
-docker run -d --name pg17 -e POSTGRES_PASSWORD=*** -p 5433:5432 -v /mnt/db/IOTstack/volumes/postgres17/data:/var/lib/postgresql/17/data aspadb-postgres:17
+# 2. run the new postgres:17 container on a side port (5434) with a NEW data dir
+#    backup dir stays on the host and is MOUNTED in (no docker cp needed)
+docker run -d --name pg17 -e POSTGRES_PASSWORD=*** -p 5434:5432 \
+  -v /mnt/db/IOTstack/volumes/postgres17/data:/var/lib/postgresql/17/data \
+  -v /mnt/db/IOTstack/DB_Backup:/mnt/DB-Backup \
+  aspadb-postgres:17
 
-# 3. restore globals → postgres → aspadb into pg17 (restore-cluster.sh)
+# 3. restore globals → postgres → aspadb into pg17 (pg_restore.sh, from the
+#    container shell — tooling + .pgpass already in <backup>/utilities/)
+docker exec -it -u postgres pg17 bash
+cd /mnt/DB-Backup/<date>-pre-upgrade-dev/utilities/
+./pg_restore.sh .. --no-owner --no-privileges
 
 # 4. verify (row counts, roles, pg_stat_statements + pgagent extension), then cut over
 #    in docker-compose.yml: image postgres:17.11, volume volumes/postgres17/data,
@@ -89,7 +97,7 @@ Key compose changes to review in the updated section:
 ## Update plan (3 containers → 2)
 
 Decision (2026-08-15): **architecture C** — postgres + pgagent run in ONE
-combined container, built from the repo Dockerfile (`docker/postgres/Dockerfile`).
+combined container, built from `docker/iotstack/services/postgres17/Dockerfile`.
 
 | # | Container | Current | Target | Activate |
 |---|-----------|---------|--------|----------|

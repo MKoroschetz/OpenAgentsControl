@@ -1,45 +1,74 @@
-# TARGET compose section - postgres + pgadmin (DRAFT for review, NOT active).
+# TARGET compose section - postgres17 + pgadmin (DRAFT for review, NOT active).
 # **Project**: aspaDB-workbench | **Path**: docker/iotstack/docker-compose.target-postgres.yml
-# Drafted 2026-08-15 for review against the captured baseline
-# (docker/iotstack/docker-compose.yml, commit 80c4f17). Do NOT deploy to
-# /mnt/db/IOTstack/docker-compose.yml until reviewed + migration planned (§A).
+# **Version**: v2.0.3 | **Last Updated**: 2026-08-16 | **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# ## Changelog
+# - v2.0.3 (2026-08-16): POSTGRES_INITDB_ARGS=--locale=C.UTF-8 -> en_US.utf8 —
+#   prod cluster is 100% en_US.utf8 (all DBs AND templates, per live check); dev
+#   must match prod. The dump's COLLATE "C.UTF-8" indexes no longer need the
+#   cluster locale — the collation is registered temporarily during restore and
+#   the 6 indexes are rebuilt with en_US.utf8 afterwards (see runbook §A.7 / the
+#   post-restore normalization step).
+# - v2.0.2 (2026-08-16): Added POSTGRES_INITDB_ARGS=--locale=C.UTF-8 — the
+#   cluster must match the old dev locale (C.UTF-8/UTF8); without it the dump's
+#   COLLATE "C.UTF-8" indexes fail ("collation does not exist").
+# - v2.0.1 (2026-08-16): Removed the /var/run/postgresql:/var/run/postgresql
+#   socket mount — it breaks side-by-side (container postgres UID 999 cannot
+#   write the host-owned socket dir: "could not create lock file
+#   /var/run/postgresql/.s.PGSQL.5432.lock: Permission denied"). docker exec
+#   -u postgres uses the in-container socket; no host socket needed.
+# - v2.0.0 (2026-08-16): Rewritten to the postgres17 plan - official
+#   postgres:17.11 image + pgagent daemon in ONE container (architecture C),
+#   versioned PGDATA /var/lib/postgresql/17/data, side-by-side port 5434:5432,
+#   healthcheck pg_isready -U postgres -h localhost (start_period 20s).
+#   Scaffold: docker/iotstack/setup-postgres17.sh. Cutover: runbook §A.9.
+# - v1.0.0 (2026-08-15): Initial draft - combined aspadb-postgres:17 image,
+#   volumes/postgres17/data on /var/lib/postgresql/17/main, pgadmin 9.8.
+#
+# Do NOT deploy to /mnt/db/IOTstack/docker-compose.yml until reviewed + migration
+# planned (§A). This is the SIDE-BY-SIDE plan: postgres17 runs on 5434 next to
+# the old aspaDB on 5432 until cutover (§A.9) flips the name/port.
 #
 # Changes vs current active setup:
-#   1. postgres service: image postgres:12.13  ->  combined aspadb-postgres:17
-#      (PG 17 + pgagent daemon in ONE container, architecture C).
-#   2. volume: volumes/postgres/data:/var/lib/postgresql/16/data (STALE, points
-#      at an old PG-12 dir)  ->  volumes/postgres17/data:/var/lib/postgresql/17/main
-#      (FRESH dir, filled by dump/restore). Solves the anonymous-volume trap:
-#      live data currently sits in an anonymous docker volume, not under volumes/.
-#   3. pgagent service (separate sidecar, was commented out) is REMOVED -
-#      pgagent now runs inside the postgres container (entrypoint).
-#   4. pgadmin: re-enabled as dpage/pgadmin4:9.8 on 9081 (was commented out).
+#   1. postgres service (postgres:12.13) -> postgres17 service (postgres:17.11
+#      + pgagent in-container, built from services/postgres17/).
+#   2. PGDATA: versioned /var/lib/postgresql/17/data (survives future PG 18
+#      upgrade, enables rollback) on a FRESH host dir volumes/postgres17/data
+#      (solves the anonymous-volume trap - live data currently sits in an
+#      anonymous docker volume, not under volumes/).
+#   3. pgagent sidecar removed - the daemon runs inside the postgres17 container.
+#   4. pgadmin: dpage/pgadmin4:9.8 on 9081, depends_on postgres17 (healthy).
 #
-# Migration order per runbook Part A: side container pg17 on :5433 with FRESH
+# Migration order per runbook Part A: side container pg17 on :5434 with FRESH
 # data dir -> restore globals/postgres/aspadb -> verify -> cut aspaDB over to
-# :5432 -> retire old container. Fresh backup first (pg_backup.sh --verify).
+# :5432 (§A.9) -> retire old container. Fresh backup first (pg_backup.sh --verify).
 
-  postgres:
+services:
+
+  postgres17:
     build:
-      context: ./services/postgres/.
+      context: ./services/postgres17/.
       dockerfile: Dockerfile
-    image: aspadb-postgres:17     # combined postgres+pgagent (Dockerfile ../../postgres/Dockerfile)
-    container_name: aspaDB
+    image: aspadb-postgres:17     # official postgres:17.11 + pgagent daemon
+    container_name: postgres17
     restart: unless-stopped
     env_file:
-      - ./services/postgres/postgres.env
+      - ./services/postgres17/postgres.env
+    environment:
+      - PGDATA=/var/lib/postgresql/17/data
+      - POSTGRES_INITDB_ARGS=--locale=en_US.utf8   # match prod (en_US.utf8 everywhere)
     ports:
-      - "5432:5432"
+      - "5434:5432"               # side-by-side; cutover flips to 5432:5432 (§A.9)
     volumes:
-      - ./volumes/postgres17/data:/var/lib/postgresql/17/main
-      - /mnt/data/aspadata/DB-Backup:/mnt/DB-Backup
-      - /var/run/postgresql:/var/run/postgresql
+      - ./volumes/postgres17/data:/var/lib/postgresql/17/data
+      - /mnt/db/IOTstack/DB_Backup:/mnt/DB-Backup
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -h /var/run/postgresql || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -h localhost || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 20s
 
   pgadmin:
     container_name: pgAdmin4
@@ -52,15 +81,5 @@
     volumes:
       - ./volumes/pgadmin:/var/lib/pgadmin
     depends_on:
-      postgres:
+      postgres17:
         condition: service_healthy
-
-# Side-by-side migration container (run until cutover, then retire):
-#   postgres:
-#     image: aspadb-postgres:17
-#     container_name: pg17
-#     environment: [ "POSTGRES_PASSWORD=***" ]
-#     ports: [ "5433:5432" ]
-#     volumes:
-#       - ./volumes/postgres17/data:/var/lib/postgresql/17/main
-#     ports: 5433:5432
