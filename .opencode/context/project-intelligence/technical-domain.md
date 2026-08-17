@@ -1,4 +1,4 @@
-<!-- Context: project-intelligence/technical | Priority: high | Version: 1.1 | Updated: 2026-08-07 -->
+<!-- Context: project-intelligence/technical | Priority: high | Version: 1.3 | Updated: 2026-08-15 -->
 
 # Technical Domain
 
@@ -18,7 +18,7 @@
 | DB Hosts | Prod `172.20.61.220` / Dev `192.168.100.32` | N/A | Prod is the authoritative source; dev is a Docker container (Debian 11) |
 | Access | `reporter` role (read-only) | N/A | Scoped to `aspa` + `public` schemas; superuser `mkoroschetz` for admin |
 | Tooling | SQL workbench scripts | N/A | `workbench/scripts/run.sh` / `snapshot.sh` with `-e prod\|dev` profiles |
-| Backup | pg_dumpall-style full cluster | N/A | `globals.sql.gz` + per-DB dumps; crontab Feb + June |
+| Backup | pg_dumpall-style full cluster | N/A | `globals.sql.gz` + per-DB dumps; crontab Feb + June; scripts in `workbench/scripts/` |
 
 ## Architecture Pattern
 
@@ -43,13 +43,13 @@ The business runs on a single PostgreSQL database with schema-level separation. 
 │   ├── setup-roles.sql       # reporter role + grants + hardening
 │   └── reports/              # Query output (gitignored)
 ├── .opencode/context/        # Project context (data layer, standards)
-└── utilities/                # Backup scripts (pg_backup.sh, pg_restore.sh)
+└── workbench/scripts/        # Backup/restore tooling (pg_backup.sh, pg_restore.sh)
 ```
 
 **Key Directories**:
 - `workbench/` - SQL workbench with profile-based env selection (`-e prod|dev`)
 - `.opencode/context/` - Project knowledge: data layer, standards, project intelligence
-- `utilities/` - Backup/restore tooling for the full cluster
+- `workbench/scripts/` - Backup/restore tooling for the full cluster (pg_backup.sh, pg_backup_rotated.sh, pg_restore.sh, pg_backup.config)
 
 ## Key Technical Decisions
 
@@ -77,8 +77,8 @@ See `decisions-log.md` for full decision history with alternatives.
 |------------|--------|--------|
 | Soft-delete convention | App design | Must filter `deleted = false` |
 | `en_US.utf8` locale | Prod cluster | Dev container must use `C.UTF-8` |
-| `pg_restore.sh -a` unimplemented | Script limitation | Full-cluster restore uses direct psql |
-| Backup cadence | Crontab (Feb + June) | Restores may be months stale |
+| `pg_restore.sh` restored | 2026-08-11 | Full-cluster restore via `pg_restore.sh` (globals → postgres → per-DB) |
+| Backup cadence | Crontab (Feb + June) | Freshest full backup 2026-08-11 (in-repo tooling, `workbench/scripts/`) |
 
 ## Development Environment
 
@@ -94,7 +94,7 @@ Testing: Run queries against dev profile first
 ```
 Environment: Production (172.20.61.220) / Development (192.168.100.32)
 Platform: PostgreSQL 12.13 on Linux (prod); Docker container (dev)
-Backup: crontab 6 4 * 2,6 * /mnt/data/aspadata/DB-Backup/pg_backup.sh
+Backup: crontab 6 4 * 2,6 * via workbench/scripts/pg_backup.sh (freshest full backup 2026-08-11)
 Monitoring: pgagent, grafana_user role present
 ```
 
@@ -107,6 +107,7 @@ Monitoring: pgagent, grafana_user role present
 - [x] Know integration points and dependencies
 - [x] Be able to set up local development environment
 - [x] Know how to run tests and deploy
+- [x] Know which agents handle which workflows (see `navigation.md` → "Tooling / Agents at a Glance")
 
 ## Related Files
 

@@ -63,9 +63,9 @@
 | Item | Detail |
 |------|--------|
 | Schedule | crontab `6 4 * 2,6 *` (Feb + Jun — brackets the season) |
-| Tooling | **in-repo**: `workbench/scripts/pg_backup.sh` (+ `pg_backup_rotated.sh`), `pg_restore.sh`, `restore-cluster.sh`, config `pg_backup.config` |
+| Tooling | **in-repo**: `workbench/scripts/pg_backup.sh` (+ `pg_backup_rotated.sh`), `pg_restore.sh` (single restore tool), config `pg_backup.config` |
 | Scope | `pg_dumpall --globals-only` + per-DB `.custom`/`.sql.gz` dumps |
-| Restore order | **globals → postgres → aspadb** (via `restore-cluster.sh`) |
+| Restore order | **globals → postgres → aspadb** (via `pg_restore.sh`) |
 | Mandatory pre-upgrade | fresh `pg_backup.sh -m pre-upgrade-<env> --verify` + dual-copy (host + external) before any migration |
 | Freshest full backup | **2026-08-11** (refined scripts, logged in `workbench/scripts/log/pg_backup.log`) |
 | Best data marker | June end-of-season backup (most recent pre-off-season state) |
