@@ -1,8 +1,10 @@
-<!-- Context: standards/file-headers | Priority: critical | Version: 1.0 | Updated: 2026-08-11 -->
+<!-- Context: standards/file-headers | Priority: critical | Version: 1.1 | Updated: 2026-08-15 -->
 
 # File Header Standards
 
 **Purpose**: Every file created or touched in this project carries a standard version header. Applies to ALL document types (`.md`, `.sh`, `.sql`, `.psql`, `.py`, `.js`, `.ts`, config files, etc.). For undefined document types, apply the header using the same field structure, adapted to the file's comment syntax.
+
+> **Exception — context files**: Files under `.opencode/context/` use the HTML-comment frontmatter header (`<!-- Context: {category}/{function} | Priority: {level} | Version: X.Y | Updated: YYYY-MM-DD -->`) and version as **X.Y** (not X.Y.Z). See `core/context-system/standards/frontmatter.md`. All other files follow the headers below.
 
 **Source of truth**: This standard is derived from the header convention in `/CLAUDE.md` (gtc-uFC project, v1.6.0) and adapted for aspaDB-workbench.
 
@@ -113,7 +115,7 @@ WHERE d.objsubid = 0 AND d.description LIKE '**Version**:%';
 
 ## Rules
 
-1. **Versioning**: MAJOR.MINOR.PATCH (breaking.feature.fix)
+1. **Versioning**: MAJOR.MINOR.PATCH (breaking.feature.fix). **Exception**: context files under `.opencode/context/` use X.Y (see note at top of this file).
 2. **License line**: exact string `MIT` (SPDX identifier, matches `/LICENSE`)
 3. **Author field**:
    - `Manfred Koroschetz` — human only

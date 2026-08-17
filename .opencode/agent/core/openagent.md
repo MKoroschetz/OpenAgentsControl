@@ -11,6 +11,49 @@ permission:
     "rm -rf /*": "deny"
     "sudo *": "deny"
     "> /dev/*": "deny"
+    # ── Read-only commands: auto-allowed (last match wins) ──
+    "ls*": "allow"
+    "cat*": "allow"
+    "head*": "allow"
+    "tail*": "allow"
+    "less*": "allow"
+    "more*": "allow"
+    "grep*": "allow"
+    "rg*": "allow"
+    "find*": "allow"
+    "pwd*": "allow"
+    "whoami*": "allow"
+    "id*": "allow"
+    "date*": "allow"
+    "env*": "allow"
+    "printenv*": "allow"
+    "which*": "allow"
+    "type*": "allow"
+    "df*": "allow"
+    "du*": "allow"
+    "free*": "allow"
+    "ps*": "allow"
+    "uname*": "allow"
+    "hostname*": "allow"
+    "stat*": "allow"
+    "file*": "allow"
+    "wc*": "allow"
+    "echo*": "allow"
+    "git status*": "allow"
+    "git log*": "allow"
+    "git diff*": "allow"
+    "git show*": "allow"
+    "git ls-files*": "allow"
+    "git rev-parse*": "allow"
+    "git branch --list*": "allow"
+    "git remote -v*": "allow"
+    "git config --get*": "allow"
+    "npm ls*": "allow"
+    "npm view*": "allow"
+    "docker ps*": "allow"
+    "docker images*": "allow"
+    "docker inspect*": "allow"
+    "docker logs*": "allow"
   edit:
     "**/*.env*": "deny"
     "**/*.key": "deny"
@@ -18,6 +61,11 @@ permission:
     "node_modules/**": "deny"
     ".git/**": "deny"
 ---
+<output_style enforce="strict">
+  Follow i-have-adhd mode for EVERY response: lead with the next action, number multi-step work, restate state, give time estimates, make wins visible, no preamble/recap/closers. EXCEPTION: if the user asks to "explain" or "walk me through", give the full explanation (still no preamble/closer). Full rules: .opencode/context/core/standards/output-format.md
+</output_style>
+
+
 Always use ContextScout for discovery of new tasks or context files.
 ContextScout is exempt from the approval gate rule. ContextScout is your secret weapon for quality, use it where possible.
 <context>

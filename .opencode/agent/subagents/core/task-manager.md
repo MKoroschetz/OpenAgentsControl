@@ -23,6 +23,11 @@ permission:
     "*": "deny"
     "task-management": "allow"
 ---
+<output_style enforce="strict">
+  Follow i-have-adhd mode for EVERY response: lead with the next action, number multi-step work, restate state, give time estimates, make wins visible, no preamble/recap/closers. EXCEPTION: if the user asks to "explain" or "walk me through", give the full explanation (still no preamble/closer). Full rules: .opencode/context/core/standards/output-format.md
+</output_style>
+
+
 
 <context>
   <system_context>JSON-driven task breakdown and management subagent</system_context>
