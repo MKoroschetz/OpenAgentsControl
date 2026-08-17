@@ -2,10 +2,22 @@
 
 # aspa_restore.sh - host-level restore wrapper for the aspaDB postgres container.
 # **Project**: aspaDB-workbench | **Path**: workbench/scripts/aspa_restore.sh
-# **Version**: v1.2.0 | **Last Updated**: 2026-08-17 | **Author**: Manfred Koroschetz/AI
+# **Version**: v1.2.1 | **Last Updated**: 2026-08-17 | **Author**: Manfred Koroschetz/AI
 # **License**: SPDX-License-Identifier: MIT
 #
 # ## Changelog
+# - v1.2.1 (2026-08-17): Fixed a silent crash in host-port resolution - `docker
+#   port` only reports mappings for a RUNNING container, but this ran before
+#   the docker stop/start below, so a container already stopped when the
+#   wrapper was invoked (the common case) made `docker port` exit non-zero;
+#   under `set -euo pipefail` that killed the script immediately with zero
+#   output (its only diagnostic was piped to 2>/dev/null). Now reads the port
+#   from `docker inspect .HostConfig.PortBindings` instead, which is the
+#   container's persisted config and is available regardless of run state.
+#   (Also chmod +x'd this script in git - it was committed 100644, so a fresh
+#   checkout/deploy needed a manual `chmod +x` to be invoked directly, e.g.
+#   through the /root/IOTstack/aspa_restore symlink, even though `bash
+#   aspa_restore.sh` worked fine either way.)
 # - v1.2.0 (2026-08-17): Fixed the backup pg_restore.sh version check - it
 #   required the -x (executable) bit, so a v2.3.0+ copy that lost its exec bit
 #   during a prod->dev transfer (scp/zip/rsync without -a) was falsely rejected
@@ -142,9 +154,15 @@ fi
 # Resolve the host port the container publishes for 5432/tcp. Side-by-side
 # containers use non-5432 host ports (dev postgres17 on 5434); the final
 # cutover container publishes 5432. ASPA_RESTORE_PORT overrides auto-detection.
+# Read from HostConfig.PortBindings (persisted container config), NOT `docker
+# port` (queries live network state - fails on a container that isn't running
+# yet, which under set -euo pipefail silently killed the script here, before
+# the docker start below ever ran).
 PORT="${ASPA_RESTORE_PORT:-}"
 if [ -z "$PORT" ]; then
-        PORT=$(docker port "$CONTAINER" 5432/tcp 2>/dev/null | head -1 | sed 's/.*://')
+        PORT=$(docker inspect "$CONTAINER" \
+                --format '{{with index .HostConfig.PortBindings "5432/tcp"}}{{(index . 0).HostPort}}{{end}}' \
+                2>/dev/null || true)
 fi
 [ -z "$PORT" ] && PORT="5432"
 
