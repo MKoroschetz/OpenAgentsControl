@@ -2,10 +2,29 @@
 
 # pg_backup.sh - Full cluster backup for aspaDB
 # **Project**: aspaDB-workbench | **Path**: workbench/scripts/pg_backup.sh
-# **Version**: v1.2.0 | **Last Updated**: 2026-08-11 | **Author**: Manfred Koroschetz/AI
+# **Version**: v1.6.0 | **Last Updated**: 2026-08-16 | **Author**: Manfred Koroschetz/AI
 # **License**: SPDX-License-Identifier: MIT
 #
 # ## Changelog
+# - v1.6.0 (2026-08-16): aspa_restore wrapper copied into <backup>/IOTstack/ -
+#   cp -fL resolves the host symlink so the backup carries a self-contained copy
+#   (portable to other hosts, e.g. dev). Guarded: only copied when present.
+# - v1.5.0 (2026-08-16): pgagent runtime table excluded from dumps - pga_jobagent
+#   (one row per running daemon) is pure runtime state and is no longer backed up
+#   (--exclude-table-data). Restoring it resurrected stale daemon registrations and
+#   broke pga_job.jobagentid FK after restore (pg_restore.sh v2.2.0 reconciles the
+#   runtime state + re-registers the daemon).
+# - v1.4.0 (2026-08-16): Config capture is now VERSION-INDEPENDENT - detect_config_dir()
+#   auto-resolves the live config dir when PG_CONFIG_DIR is blank: SHOW config_file via
+#   the backup connection, then docker mount mapping for in-container paths (works for
+#   PG12 old cluster AND PG17, anonymous volumes AND bind mounts). pg_hba.conf is
+#   included in <backup>/config/ and ACTIVATED on restore (pg_restore.sh v2.0.4).
+# - v1.3.1 (2026-08-16): Utilities copy no longer includes restore-cluster.sh —
+#   merged into pg_restore.sh v2.0.0 (single restore tool).
+# - v1.3.0 (2026-08-16): Config backup - copies the live postgresql.conf /
+#   postgresql.auto.conf / pg_hba.conf into <backup>/config/ (PG_CONFIG_DIR),
+#   so server tuning is part of the backup and can be staged on restore
+#   (pg_restore.sh v2.0.0 -> PGDATA_TARGET as *.restored).
 # - v1.2.0 (2026-08-11): Symlink auto-manual detection, --verify, restore-cluster.sh copy
 # - v1.1.0 (2026-08-11): Improved 2026-08 (symlink resolution, config via resolved path)
 # - v1.0.0 (2026-08-11): Initial standard header
@@ -217,6 +236,12 @@ done
 ###### FULL BACKUPS #######
 ###########################
 
+# pgagent's pga_jobagent table is RUNTIME state (one row per running daemon) -
+# never back it up: restoring it resurrects stale daemon registrations and breaks
+# pga_job.jobagentid -> pga_jobagent.jagid after restore. The daemon re-registers
+# on restart; pg_restore.sh v2.2.0 reconciles the runtime state post-restore.
+PGAGENT_EXCLUDE="--exclude-table-data=pgagent.pga_jobagent"
+
 EXCLUDE_SCHEMA_ONLY_CLAUSE=""
 for SCHEMA_ONLY_DB in ${SCHEMA_ONLY_LIST//,/ }; do
         EXCLUDE_SCHEMA_ONLY_CLAUSE="$EXCLUDE_SCHEMA_ONLY_CLAUSE and datname !~ '$SCHEMA_ONLY_DB'"
@@ -232,7 +257,7 @@ for DATABASE in $(psql $PGHOST_ARGS -U "$USERNAME" -At -c "$FULL_BACKUP_QUERY" -
                 echo -e " Performing backup of $DATABASE in PLAIN sql format ..."
                 echo "$(date +%Y-%m-%d_%H:%M:%S);Plain backup of $DATABASE" >> "$LOG_FILE"
 
-                if ! pg_dump -Fp $PGHOST_ARGS -U "$USERNAME" -d "passfile=$PGPWDFILE dbname=$DATABASE" | gzip > "$FINAL_BACKUP_DIR/${DATABASE}.sql.gz.in_progress"; then
+                if ! pg_dump -Fp $PGAGENT_EXCLUDE $PGHOST_ARGS -U "$USERNAME" -d "passfile=$PGPWDFILE dbname=$DATABASE" | gzip > "$FINAL_BACKUP_DIR/${DATABASE}.sql.gz.in_progress"; then
                         echo "[!!ERROR!!] Failed to produce plain backup database $DATABASE" 1>&2
                         echo "$(date +%Y-%m-%d_%H:%M:%S);[!!ERROR!!] Failed to produce plain backup database $DATABASE" >> "$LOG_FILE"
                 else
@@ -247,7 +272,7 @@ for DATABASE in $(psql $PGHOST_ARGS -U "$USERNAME" -At -c "$FULL_BACKUP_QUERY" -
                 echo -e " Performing backup of $DATABASE in CUSTOM format. Use pg_restore to recover data! ..."
                 echo "$(date +%Y-%m-%d_%H:%M:%S);Custom backup of $DATABASE" >> "$LOG_FILE"
 
-                if ! pg_dump -Fc $PGHOST_ARGS -U "$USERNAME" -d "passfile=$PGPWDFILE dbname=$DATABASE" -f "$FINAL_BACKUP_DIR/${DATABASE}.custom.in_progress"; then
+                if ! pg_dump -Fc $PGAGENT_EXCLUDE $PGHOST_ARGS -U "$USERNAME" -d "passfile=$PGPWDFILE dbname=$DATABASE" -f "$FINAL_BACKUP_DIR/${DATABASE}.custom.in_progress"; then
                         echo "[!!ERROR!!] Failed to produce custom backup database $DATABASE" 1>&2
                         echo "$(date +%Y-%m-%d_%H:%M:%S);[!!ERROR!!] Failed to produce custom backup database $DATABASE" >> "$LOG_FILE"
                 else
@@ -260,6 +285,62 @@ for DATABASE in $(psql $PGHOST_ARGS -U "$USERNAME" -At -c "$FULL_BACKUP_QUERY" -
                 fi
         fi
 done
+
+###########################
+#### CONFIG BACKUPS #######
+###########################
+
+# detect_config_dir - resolve the LIVE postgresql.conf dir, version-independent.
+# Priority: 1) PG_CONFIG_DIR from config (if valid), 2) SHOW config_file via the
+# backup connection (bare-metal: path exists locally), 3) docker mount mapping
+# (in-container path -> host source; works for anonymous volumes AND bind mounts,
+# so it is agnostic to the PG version / container layout).
+detect_config_dir() {
+        if [ -n "$PG_CONFIG_DIR" ] && [ -d "$PG_CONFIG_DIR" ]; then
+                echo "$PG_CONFIG_DIR"
+                return 0
+        fi
+        local cfg_file cfg_dir cid src
+        cfg_file="$(psql $PGHOST_ARGS -U "$USERNAME" -d postgres -tAc "SHOW config_file;" 2>/dev/null | tr -d '[:space:]')"
+        [ -z "$cfg_file" ] && return 1
+        cfg_dir="$(dirname "$cfg_file")"
+        if [ -d "$cfg_dir" ]; then
+                echo "$cfg_dir"
+                return 0
+        fi
+        # In-container path (e.g. /var/lib/postgresql/data): find the docker
+        # container mounting it and map to the host-side source dir. Only accept
+        # a source that actually holds postgresql.conf - other containers may
+        # mount the same path with an empty/decoy volume (e.g. the new cluster's
+        # anonymous volume while its real PGDATA is a bind mount).
+        for cid in $(docker ps -q 2>/dev/null); do
+                src="$(docker inspect "$cid" --format '{{range .Mounts}}{{if eq .Destination "'"$cfg_dir"'"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)"
+                if [ -n "$src" ] && [ -d "$src" ] && [ -f "$src/postgresql.conf" ]; then
+                        echo "$src"
+                        return 0
+                fi
+        done
+        return 1
+}
+
+echo -e "\n\nPerforming postgresql.conf backup"
+echo -e "--------------------------------------------\n"
+
+CONFIG_DIR="$(detect_config_dir)"
+if [ -n "$CONFIG_DIR" ]; then
+        CONFIG_BACKUP_DIR="${FINAL_BACKUP_DIR}config"
+        mkdir -p "$CONFIG_BACKUP_DIR"
+        for CFG in postgresql.conf postgresql.auto.conf pg_hba.conf; do
+                if [ -f "$CONFIG_DIR/$CFG" ]; then
+                        cp -af "$CONFIG_DIR/$CFG" "$CONFIG_BACKUP_DIR/$CFG"
+                        echo "   $CFG backed up"
+                        echo "$(date +%Y-%m-%d_%H:%M:%S);Config backup of $CFG" >> "$LOG_FILE"
+                fi
+        done
+else
+        echo "Could not resolve the live config dir - skipping postgresql.conf backup"
+        echo "  (set PG_CONFIG_DIR in pg_backup.config to the host dir holding the live postgresql.conf)"
+fi
 
 #############################################################
 ###### BACKUP DOCKER COMPOSE SCRIPT and OTHER SCRIPTS #######
@@ -280,12 +361,18 @@ cp -af "${BACKUP_DIR}pg_backup_rotated.sh" "${FINAL_BACKUP_DIR}utilities/pg_back
 cp -af "${BACKUP_DIR}pg_backup.config" "${FINAL_BACKUP_DIR}utilities/pg_backup.config"
 cp -af "${BACKUP_DIR}pg_maintenance.sh" "${FINAL_BACKUP_DIR}utilities/pg_maintenance.sh"
 cp -af "${BACKUP_DIR}pg_restore.sh" "${FINAL_BACKUP_DIR}utilities/pg_restore.sh"
-cp -af "${BACKUP_DIR}restore-cluster.sh" "${FINAL_BACKUP_DIR}utilities/restore-cluster.sh"
 cp -af "${BACKUP_DIR}aspa_IngresCleanup.sh" "${FINAL_BACKUP_DIR}utilities/aspa_IngresCleanup.sh"
 cp -af "${BACKUP_DIR}.pgpass" "${FINAL_BACKUP_DIR}utilities/.pgpass"
 chmod 600 "${FINAL_BACKUP_DIR}utilities/.pgpass"
 
 cp -a "${DOCKER_COMPOSE_DIR}aspa_backup" "${FINAL_BACKUP_DIR}IOTstack/aspa_backup" 2>/dev/null || true
+# aspa_restore wrapper: cp -fL resolves the host symlink -> self-contained copy
+# (portable to other hosts). Guarded: only copied when present on the host.
+if [ -f "${DOCKER_COMPOSE_DIR}aspa_restore" ]; then
+        cp -fL "${DOCKER_COMPOSE_DIR}aspa_restore" "${FINAL_BACKUP_DIR}IOTstack/aspa_restore"
+        chmod +x "${FINAL_BACKUP_DIR}IOTstack/aspa_restore"
+        echo "   aspa_restore wrapper copied to IOTstack/"
+fi
 cp -a /var/spool/cron/crontabs/root "${FINAL_BACKUP_DIR}crontabs/root" 2>/dev/null || true
 
 echo -e "\nAll database backups complete!"

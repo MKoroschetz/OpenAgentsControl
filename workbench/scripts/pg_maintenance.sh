@@ -2,18 +2,24 @@
 
 # pg_maintenance.sh - Daily routine maintenance (ANALYZE + VACUUM) for all databases
 # **Project**: aspaDB-workbench | **Path**: workbench/scripts/pg_maintenance.sh
-# **Version**: v1.1.0 | **Last Updated**: 2026-08-11
+# **Version**: v1.2.0 | **Last Updated**: 2026-08-16
 # **Author**: Manfred Koroschetz/AI
 # **License**: SPDX-License-Identifier: MIT
 #
 # ## Changelog
+# - v1.2.0 (2026-08-16): Force unix-socket connection when running inside a
+#   container (/.dockerenv) — the postgres17 container has NO host socket
+#   mount, so host-side cron must invoke via `docker exec -u postgres`.
 # - v1.1.0 (2026-08-11): Fix -c config parsing, ${ECHO}, [ -z ] tests, symlink
 #                        resolution; loop ALL databases (was hardcoded aspadb);
 #                        mkdir -p log dir; standard header
 # - v1.0.0 (2023-01-17): Original routine maintenance script (aspadb only)
 #
 # Usage (cron):
+#   # PG12 era (host socket mount): run directly on the DB host
 #   8 2 * * * /mnt/data/aspadata/DB-Backup/pg_maintenance.sh
+#   # PG17 era (postgres17 container, no host socket): run INSIDE the container
+#   8 2 * * * docker exec -u postgres postgres17 /mnt/DB-Backup/pg_maintenance.sh
 #
 # Runs ANALYZE then VACUUM on every non-template, connectable database
 # (same DB list as pg_restore.sh --maintenance-only). Invoke daily before
@@ -93,6 +99,14 @@ if [ -n "$HOSTNAME" ] && [ "$HOSTNAME" != "localhost" ]; then
         PGHOST_ARGS="-h $HOSTNAME"
 else
         PGHOST_ARGS=""
+fi
+
+# Inside a container, ALWAYS connect over the unix socket (peer auth as the
+# postgres OS user). TCP ports are host-side mappings (5434:5432) — a config
+# HOSTNAME pointing at the host IP would hit the OLD container on 5432.
+if [ -f /.dockerenv ]; then
+        PGHOST_ARGS=""
+        unset PGHOST
 fi
 
 # PGPASSWORD env var overrides the passfile - unset it so the passfile is used

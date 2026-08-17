@@ -21,7 +21,7 @@
 #
 # Produces the same directory layout as pg_backup.sh (globals.sql.gz,
 # *.custom / *.sql.gz, utilities/, IOTstack/, crontabs/) so the restore
-# tooling (restore-cluster.sh) works identically on either.
+# tooling (pg_restore.sh) works identically on either.
 
 ## Change to script folder (resolve symlinks so any link invocation works)
 SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || echo "$0")"
@@ -238,7 +238,6 @@ perform_backups()
         cp -af "${BACKUP_DIR}pg_backup.config" "${FINAL_BACKUP_DIR}utilities/pg_backup.config"
         cp -af "${BACKUP_DIR}pg_maintenance.sh" "${FINAL_BACKUP_DIR}utilities/pg_maintenance.sh"
         cp -af "${BACKUP_DIR}pg_restore.sh" "${FINAL_BACKUP_DIR}utilities/pg_restore.sh"
-        cp -af "${BACKUP_DIR}restore-cluster.sh" "${FINAL_BACKUP_DIR}utilities/restore-cluster.sh"
         cp -af "${BACKUP_DIR}aspa_IngresCleanup.sh" "${FINAL_BACKUP_DIR}utilities/aspa_IngresCleanup.sh"
         cp -af "${BACKUP_DIR}.pgpass" "${FINAL_BACKUP_DIR}utilities/.pgpass"
         chmod 600 "${FINAL_BACKUP_DIR}utilities/.pgpass"
