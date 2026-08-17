@@ -1,0 +1,110 @@
+# pr-title-check.yml - Generalized PR title validation for commit conventions.
+# **Project**: aspaDB-workbench | **Path**: scripts/ci/pr-title-check.yml
+# **Version**: v1.0.0 | **Last Updated**: 2026-08-15
+# **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# ## Changelog
+# - v1.0.0 (2026-08-15): Initial standard header; extracted from .github/workflows/pr-checks.yml
+
+name: PR Title Check
+
+# Generalized PR title validation for the project's commit conventions.
+# Backported automatically by scripts/hooks/backport-commit-standards.sh.
+# Keep the `patterns` regexes in sync with scripts/hooks/commit-msg and any
+# project-local pr-checks.yml.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title-check:
+    name: Validate PR Title
+    runs-on: ubuntu-latest
+    outputs:
+      title-valid: ${{ steps.validate.outputs.valid }}
+    steps:
+      - name: Check PR title format
+        id: validate
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const prTitle = context.payload.pull_request.title;
+
+            // Conventional commit patterns (mirror scripts/hooks/commit-msg)
+            const patterns = {
+              feat: /^feat(\([a-z0-9]+(-[a-z0-9]+)*\))?!?:\s.+/,
+              fix: /^fix(\([a-z0-9]+(-[a-z0-9]+)*\))?!?:\s.+/,
+              docs: /^docs(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              style: /^style(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              refactor: /^refactor(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              perf: /^perf(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              test: /^test(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              chore: /^chore(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              ci: /^ci(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              build: /^build(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              revert: /^revert(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              alpha: /^\[alpha\]\s.+/,
+              beta: /^\[beta\]\s.+/,
+              rc: /^\[rc\]\s.+/
+            };
+
+            const matchedType = Object.entries(patterns).find(([type, pattern]) =>
+              pattern.test(prTitle)
+            );
+
+            if (!matchedType) {
+              const validExamples = [
+                'feat(scope): add new feature',
+                'fix(scope): correct bug',
+                'docs: update documentation',
+                'feat!: breaking API change',
+                '[beta] prerelease feature'
+              ];
+              const message = `
+              ## Invalid PR Title Format
+
+              **Current title:** \`${prTitle}\`
+
+              ### Required Format
+              PR titles must follow [Conventional Commits](https://www.conventionalcommits.org/):
+              \`<type>(<scope>): <description>\`
+
+              ### Valid Types
+              feat, fix, docs, style, refactor, perf, test, chore, ci, build, revert
+
+              ### Breaking Changes
+              - **feat!:** or **fix!:** - breaking change (add migration notes in the description)
+
+              ### Pre-release Tags
+              - **[alpha]**, **[beta]**, **[rc]** - prerelease
+
+              ### Valid Examples
+              ${validExamples.map(ex => '- ' + ex).join('\n')}
+
+              ### How to Fix
+              Edit your PR title to match the format above.
+              `;
+              core.info(message);
+              await core.summary.addRaw(message).write();
+              core.setFailed(message);
+            } else {
+              const [type] = matchedType;
+              const message = `
+              ## PR Title Valid
+
+              **Title:** \`${prTitle}\`
+              **Type:** \`${type}\`
+
+              When this PR is merged using **"Squash and Merge"**, the merge
+              commit title keeps the conventional format for release tooling.
+              `;
+              core.info(message);
+              await core.summary.addRaw(message).write();
+              core.setOutput('valid', 'true');
+            }

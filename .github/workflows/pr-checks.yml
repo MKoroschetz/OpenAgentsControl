@@ -25,17 +25,17 @@ jobs:
             
             // Conventional commit patterns
             const patterns = {
-              feat: /^feat(\(.+\))?!?:\s.+/,
-              fix: /^fix(\(.+\))?!?:\s.+/,
-              docs: /^docs(\(.+\))?:\s.+/,
-              style: /^style(\(.+\))?:\s.+/,
-              refactor: /^refactor(\(.+\))?:\s.+/,
-              perf: /^perf(\(.+\))?:\s.+/,
-              test: /^test(\(.+\))?:\s.+/,
-              chore: /^chore(\(.+\))?:\s.+/,
-              ci: /^ci(\(.+\))?:\s.+/,
-              build: /^build(\(.+\))?:\s.+/,
-              revert: /^revert(\(.+\))?:\s.+/,
+              feat: /^feat(\([a-z0-9]+(-[a-z0-9]+)*\))?!?:\s.+/,
+              fix: /^fix(\([a-z0-9]+(-[a-z0-9]+)*\))?!?:\s.+/,
+              docs: /^docs(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              style: /^style(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              refactor: /^refactor(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              perf: /^perf(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              test: /^test(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              chore: /^chore(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              ci: /^ci(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              build: /^build(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
+              revert: /^revert(\([a-z0-9]+(-[a-z0-9]+)*\))?:\s.+/,
               alpha: /^\[alpha\]\s.+/,
               beta: /^\[beta\]\s.+/,
               rc: /^\[rc\]\s.+/

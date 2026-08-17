@@ -328,16 +328,66 @@ When a variant proves superior:
 
 **Note:** In the new architecture, agent files are the canonical defaults. There are no `default.md` files in the prompts directory.
 
+## Commit Message Guidelines
+
+```
+type(scope): brief imperative summary (≤72 chars)
+
+Why: what this fixes or enables, and what led to it. Reference docs by
+filename when relevant. Prefix `!` for breaking changes (only on `feat`/
+`fix`, e.g. `feat(scope)!:`) and add a footer describing the migration
+impact.
+
+Files changed:
+- /path/file.py v1.2.3: what changed
+```
+
+**Types** (enforced):
+
+Primary: `feat` `fix` `docs` `refactor` `test` `chore` `perf`
+Also enforced: `style` `ci` `build` `revert` — prerelease commits use `[alpha]` / `[beta]` / `[rc]` prefixes
+
+**Scopes** (lowercase, kebab-case — no spaces)
+
+`cellular-transport` `mqtt` `sensor` `power` `config`
+
+**Rules**
+- Subject: imperative mood, why-focused — "implement", not "implemented/implementing"
+- Blank line between subject and body; avoid bare one-line commits
+- File versions match the project's in-file version headers
+- Keep type/scope pairs consistent for searchable history
+
+**Example**
+```
+feat(transport): implement LTETransport
+
+Replaces broken PPPTransport (see transport-layer-analysis.md).
+Uses sim70xx primitives for connection/data I/O.
+
+Files changed:
+- /lib/transport.py v1.3.0: added LTETransport class
+- /docs/transport-layer-analysis.md v1.1.0: updated status
+```
+
+**Enforcement**: commits are validated locally by `scripts/hooks/commit-msg`
+(self-contained, no dependencies). Enable it in any clone with:
+
+```bash
+cp scripts/hooks/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
+```
+
+Override when intentional: `git commit --no-verify`. PR titles are validated
+in CI by `.github/workflows/pr-checks.yml`.
+
 ## Pull Request Guidelines
 
 ### PR Title Format
 
-Use conventional commits:
-- `feat: add new agent for X`
+Use conventional commits (same format as commit messages):
+- `feat(transport): implement LTETransport`
 - `fix: correct issue in Y command`
 - `docs: update Z documentation`
 - `chore: update dependencies`
-- `prompt: add new variant for X model`
 
 ### PR Description
 

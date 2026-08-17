@@ -1,0 +1,73 @@
+#!/bin/bash
+
+# commit-msg - Enforce project git commit conventions (self-contained, no deps).
+# **Project**: aspaDB-workbench | **Path**: scripts/hooks/commit-msg
+# **Version**: v1.0.0 | **Last Updated**: 2026-08-15
+# **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# ## Changelog
+# - v1.0.0 (2026-08-15): Initial standard header; enforce conventional commit subject rules
+#
+# Adopt in any project: cp scripts/hooks/commit-msg .git/hooks/commit-msg && chmod +x ...
+# Skips checks for merge commits; bypass intentionally with: git commit --no-verify
+
+set -e
+
+FILE="$1"
+
+SUBJECT=""
+while IFS= read -r line || [ -n "$line" ]; do
+  line="${line%%$'\r'}"
+  if [ -n "$line" ] && [[ "$line" != \#* ]]; then
+    SUBJECT="$line"
+    break
+  fi
+done < "$FILE"
+
+# Empty messages and git merge commits bypass checks
+if [ -z "$SUBJECT" ] || [[ "$SUBJECT" == Merge* ]]; then
+  exit 0
+fi
+
+# Prerelease prefix [alpha] / [beta] / [rc]  (matches CI)
+if [[ "$SUBJECT" =~ ^\[(alpha|beta|rc)\] ]]; then
+  exit 0
+fi
+
+TYPES="feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert"
+
+# Scope: optional, lowercase kebab-case (no spaces) -- matches CI regex
+BREAKING_PATTERN="^(feat|fix)(\([a-z0-9]+(-[a-z0-9]+)*\))?!?: .+"
+STANDARD_PATTERN="^($TYPES)(\([a-z0-9]+(-[a-z0-9]+)*\))?: .+"
+
+# Breaking marker '!' only on feat/fix (matches CI versioning). Check first.
+if [[ "$SUBJECT" =~ $BREAKING_PATTERN ]]; then
+  : valid
+elif [[ "$SUBJECT" =~ $STANDARD_PATTERN ]]; then
+  : valid
+else
+  echo ""
+  echo "Commit message does not match required format:"
+  echo "  type(scope): brief imperative summary"
+  echo ""
+  echo "  Types: $TYPES"
+  echo "  Scope: optional, lowercase kebab-case (e.g. cellular-transport, mqtt)"
+  echo "  Breaking change: '!' allowed only on feat/fix (e.g. feat(scope)!: ...)"
+  echo "  Prerelease: [alpha], [beta], or [rc] prefix allowed"
+  echo ""
+  echo "  Example: feat(transport): implement LTETransport"
+  echo ""
+  echo "Aborting commit. Override with: git commit --no-verify"
+  exit 1
+fi
+
+if [ ${#SUBJECT} -gt 72 ]; then
+  echo ""
+  echo "Commit subject is ${#SUBJECT} chars (max 72):"
+  echo "  $SUBJECT"
+  echo "Shorten the subject; keep details in the body."
+  exit 1
+fi
+
+exit 0
