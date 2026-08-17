@@ -1,11 +1,12 @@
 # PostgreSQL 12.13 → 17.11 Upgrade Guide (Debian 10/13 → Debian 13)
 
 **Project**: aspaDB-workbench | **Path**: docs/CORE-PLATFORM-UPGRADE.md
-**Version**: v1.9.0 | **Last Updated**: 2026-08-16
+**Version**: v1.10.1 | **Last Updated**: 2026-08-17
 **Author**: Manfred Koroschetz/AI
 **License**: SPDX-License-Identifier: MIT
 
 ## Changelog
+- v1.10.1 (2026-08-17): **`aspa_restore.sh` bug fixes from dev testing** (v1.1.1 → v1.2.3), found by actually running restores on dev rather than reading the code: (1) fixed a **silent crash** — port resolution used `docker port`, which only reports mappings for a *running* container; queried before the wrapper's own stop/start, it died instantly under `set -euo pipefail` with **zero output** whenever the target was already stopped at invocation (the common disaster-recovery case) — now reads `HostConfig.PortBindings` via `docker inspect` (works regardless of run state). (2) restored the **executable bit** lost when the script was committed `100644` in 7bc6352 — invoking it directly (e.g. via the `/root/IOTstack/aspa_restore` symlink) needed a manual `chmod +x`; `bash aspa_restore.sh` masked the gap. (3) **`PGDATA_TARGET` now auto-detected** from the container's `PGDATA` env var + matching bind mount — the wrapper's own throwaway config for `pg_restore.sh` previously always left it empty (independent of what `pg_backup.config` had), so `pg_hba.conf` activation was silently skipped on every wrapper-driven restore. (4) **bare backup names now resolve** via `SCRIPT_DIR` (e.g. `aspa_restore 2026-08-17-manual` from any cwd) — previously required the full path relative to the invocation directory. Also `pg_backup.sh` v1.6.1: `aspa_backup`'s symlink copy into `<backup>/IOTstack/` was a **dangling relative symlink** (now dereferenced with `cp -fL`, same as `aspa_restore` already did); `aspa_restore.sh` now also copied into `<backup>/utilities/` for parity with its sibling scripts. All four `aspa_restore.sh` fixes verified end-to-end on dev against `2026-08-17-manual` (full cluster restore through the actual symlink; `PGDATA_TARGET` + bare-name resolution verified via non-destructive dry-runs that stopped short of touching the live container). A.5b updated below.
 - v1.10.0 (2026-08-16): **Host-level restore wrapper `aspa_restore.sh`** (v1.1.1) — restore without shelling into the container: stop → start → run the backup's `utilities/pg_restore.sh` over TCP (auto-detects the published host port, e.g. dev 5434) → restart so pgagent re-registers fresh. Installed on dev and tested end-to-end (2026-08-17-manual → postgres17: all DBs restored, pgagent reconciled — 0 orphaned jobagentids, sequence synced). `pg_backup.sh` v1.6.0 copies the wrapper into `<backup>/IOTstack/` (self-contained, portable). `pg_restore.sh` v2.4.1: config `PORT` support + `${VAR:-}` guards for minimal configs. `entrypoint.sh` v1.2.0: **fast shutdown (SIGINT)** — SIGTERM is a smart shutdown that hangs on active connections past docker stop's 10s grace (SIGKILL + crash recovery on every stop); now clean ~0.4s shutdowns (verified on dev). See A.5b.
 - v1.9.0 (2026-08-16): **Locale decision — cluster is now 100% en_US.utf8** (prod is en_US.utf8 everywhere incl. templates; dev re-inited to match). The old dev cluster was init'd with C.UTF-8 default, so early objects (6 indexes across aspadb/aspadb-temp/aspadb2023) got pinned to `COLLATE "C.UTF-8"`; those were rebuilt with en_US.utf8 on dev AND prod (prod: aspadb 2 + aspadb2023 3). `pg_restore.sh` v2.1.0 now **automates** the normalization: temp-register collation (init-pgagent.sh) → restore → rebuild C.UTF-8 indexes with en_US.utf8 → drop collation (step [4/5]). Compose v2.0.3: `POSTGRES_INITDB_ARGS=--locale=en_US.utf8`. Config handling: pg_hba.conf ACTIVATED on restore; postgresql.conf/auto.conf REFERENCE-ONLY (never written to PGDATA; auto.conf is ALTER SYSTEM-managed). A.1–A.7 executed on dev (restore verified: inventory 61,675/73,798).
 - v1.8.8 (2026-08-16): A.4 locale fix — the cluster MUST be initialized with `POSTGRES_INITDB_ARGS=--locale=C.UTF-8` (matches old dev locale); without it the dump's `COLLATE "C.UTF-8"` indexes fail ("collation does not exist"). Baked into `docker-compose.target-postgres.yml` v2.0.2. *(Superseded by v1.9.0 — en_US.utf8 everywhere + normalization.)*
@@ -459,28 +460,55 @@ counterpart of `aspa_backup`). It manages the container lifecycle around
 
 **One-time setup (per host — prod and dev):**
 
+The wrapper resolves both its `pg_restore.sh` fallback and (v1.2.3+) bare
+backup names relative to its **own** location, so deploy it into the same
+directory as the backups themselves (e.g. `DB_Backup/`), then symlink it in
+next to `docker-compose.yml` — this is the actual layout verified on dev:
+
 ```bash
-# next to docker-compose.yml, like aspa_backup (symlink or copy)
-cp workbench/scripts/aspa_restore.sh /root/IOTstack/aspa_restore
-cp workbench/scripts/pg_restore.sh  /root/IOTstack/pg_restore.sh
-chmod +x /root/IOTstack/aspa_restore /root/IOTstack/pg_restore.sh
+cp workbench/scripts/aspa_restore.sh /root/IOTstack/DB_Backup/aspa_restore.sh
+cp workbench/scripts/pg_restore.sh   /root/IOTstack/DB_Backup/pg_restore.sh
+chmod +x /root/IOTstack/DB_Backup/aspa_restore.sh /root/IOTstack/DB_Backup/pg_restore.sh
+
+ln -s ./DB_Backup/aspa_restore.sh /root/IOTstack/aspa_restore
 ```
+
+> `chmod +x` matters even on a straight `git pull`/`cp` — the script was
+> committed `100644` until v1.2.1 (fixed 2026-08-17); always verify `-x` after
+> deploying a fresh copy, symlink or not.
 
 **Usage:**
 
 ```bash
+# Bare backup name (v1.2.3+) - resolves relative to $PWD, then to the
+# wrapper's own directory (DB_Backup/), so this works from anywhere:
+/root/IOTstack/aspa_restore 2026-08-17-manual
+
+# Full path also still works, same result:
+/root/IOTstack/aspa_restore /mnt/db/IOTstack/DB_Backup/2026-08-17-manual
+
 # container name: aspadb (final) > aspaDB (compose historical) > ASPA_RESTORE_CONTAINER env
-ASPA_RESTORE_CONTAINER=postgres17 /root/IOTstack/aspa_restore /mnt/db/IOTstack/DB-Backup/2026-08-17-manual
+ASPA_RESTORE_CONTAINER=postgres17 /root/IOTstack/aspa_restore 2026-08-17-manual
 ```
 
 Notes:
 - The wrapper prefers the backup's own `utilities/pg_restore.sh` (needs v2.3.0+,
-  i.e. made by `pg_backup.sh` v1.5.0+); older backups fall back to the local copy.
-- `pg_backup.sh` v1.6.0 copies `aspa_restore` into `<backup>/IOTstack/` (`cp -fL`
-  resolves the host symlink), so every backup is self-contained and portable.
-- The wrapper's temp config does not set `PGDATA_TARGET`, so config staging
-  (pg_hba.conf activation) is skipped with a warning — data restore + pgagent
-  reconciliation are the wrapper's scope.
+  i.e. made by `pg_backup.sh` v1.5.0+); older backups fall back to the copy next
+  to the wrapper itself.
+- `pg_backup.sh` v1.6.1 copies `aspa_restore` **and** `aspa_backup` into
+  `<backup>/IOTstack/` (`cp -fL` dereferences the host symlink into a
+  self-contained copy for both, consistently — `aspa_backup` used to be copied
+  as a raw symlink, which dangled inside the backup package) and
+  `aspa_restore.sh` into `<backup>/utilities/` alongside its sibling scripts.
+- `PGDATA_TARGET` is now **auto-detected** (v1.2.2+) from the container's
+  `PGDATA` env var + matching bind mount, so `pg_hba.conf` activation now
+  works on wrapper-driven restores — it was previously always skipped, since
+  the wrapper's throwaway config never set it regardless of `pg_backup.config`.
+- Port resolution (v1.2.1+) reads the container's persisted
+  `HostConfig.PortBindings` via `docker inspect`, not the running-only `docker
+  port` — the wrapper now works correctly even when the target container is
+  already stopped at invocation (previously died silently, no error output,
+  before ever reaching the `docker stop`/`start` steps below).
 - Verified on dev (2026-08-16): full restore of `2026-08-17-manual` into
   `postgres17` — all DBs restored, pgagent reconciled (0 orphaned jobagentids,
   `pga_joblog_jlgid_seq` synced, 7 jobs unclaimed for re-registration).
