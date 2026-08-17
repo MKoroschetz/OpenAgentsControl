@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 #
-# OpenCode Token Usage Aggregator
+# sum-token-usage.sh - OpenCode token usage + cost aggregator.
+# **Project**: aspaDB-workbench | **Path**: scripts/check-context-logs/sum-token-usage.sh
+# **Version**: v1.1.0 | **Last Updated**: 2026-08-17
+# **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# ## Changelog
+# - v1.1.0 (2026-08-17): Read from opencode.db (SQLite) when present - current
+#   opencode writes message/session data to the DB, not the legacy JSON storage
+#   (which stopped updating 2026-03-13). DB rows are extracted into the legacy
+#   layout in a temp dir and the existing jq pipeline is reused unchanged.
+#   Added --db flag; --storage still works for legacy-only installs.
+# - v1.0.0 (2026-08-15): Initial aggregator (legacy JSON storage only)
+#
 # Tracks real token usage + cost across all OpenCode sessions for this project.
 # Reads local OpenCode storage (message-level tokens/cost) and writes a gitignored
 # snapshot + append-only history for cost analysis.
@@ -8,11 +21,13 @@
 # Usage:
 #   ./sum-token-usage.sh               # summarize this project's sessions
 #   ./sum-token-usage.sh --all         # include sessions outside this repo
-#   ./sum-token-usage.sh --storage DIR # custom OpenCode storage root
+#   ./sum-token-usage.sh --storage DIR # custom OpenCode storage root (legacy JSON)
+#   ./sum-token-usage.sh --db PATH     # explicit opencode.db (SQLite) path
 #   ./sum-token-usage.sh --history     # print the history table
 #   ./sum-token-usage.sh --json        # emit latest snapshot as JSON
 #
-# Output lives in: <repo>/.tmp/token-usage/  (gitignored)
+# Source priority: --db > $OPENCODE_DB > <storage>/../opencode.db > legacy JSON.
+# Requires: jq, python3 (SQLite extraction). Output lives in .tmp/token-usage/.
 
 set -euo pipefail
 
@@ -26,6 +41,10 @@ DATA_DIR="$WORKSPACE_ROOT/.tmp/token-usage"
 LATEST_JSON="$DATA_DIR/latest.json"
 HISTORY_CSV="$DATA_DIR/history.csv"
 
+DB_PATH=""
+DB_TMP=""
+trap 'rm -rf "$DB_TMP"' EXIT
+
 INCLUDE_ALL=""
 MODE="summary"
 
@@ -33,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --all) INCLUDE_ALL="1" ;;
         --storage) STORAGE="$2"; shift ;;
+        --db) DB_PATH="$2"; shift ;;
         --history) MODE="history" ;;
         --json) MODE="json" ;;
         -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
@@ -41,12 +61,62 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-if [[ ! -d "$STORAGE/message" ]]; then
+# --- Source detection: SQLite DB (current) vs legacy JSON storage ---
+SOURCE_LABEL="$STORAGE"
+DB_PATH="${DB_PATH:-${OPENCODE_DB:-}}"
+if [[ -z "$DB_PATH" && -f "$STORAGE/../opencode.db" ]]; then
+    DB_PATH="$STORAGE/../opencode.db"
+fi
+
+if [[ -n "$DB_PATH" && -f "$DB_PATH" ]]; then
+    # Extract DB rows into the legacy layout in a temp dir, then reuse the
+    # existing jq pipeline below unchanged. Messages are written as JSONL
+    # (one message per line) so `jq -s` slurps them into one array.
+    DB_TMP=$(mktemp -d)
+    if ! python3 - "$DB_PATH" "$DB_TMP" <<'PY'
+import json, os, sqlite3, sys
+
+db_path, out_root = sys.argv[1], sys.argv[2]
+session_dir = os.path.join(out_root, "session")
+msg_root = os.path.join(out_root, "message")
+os.makedirs(session_dir, exist_ok=True)
+os.makedirs(msg_root, exist_ok=True)
+
+con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+cur = con.cursor()
+
+for sid, directory, created in cur.execute(
+    "SELECT id, directory, time_created FROM session"
+):
+    meta = {"id": sid, "directory": directory or "?", "time": {"created": created or 0}}
+    with open(os.path.join(session_dir, f"{sid}.json"), "w") as f:
+        json.dump(meta, f)
+
+for sid, data in cur.execute("SELECT session_id, data FROM message"):
+    try:
+        d = json.loads(data)
+    except Exception:
+        continue
+    if not isinstance(d, dict):
+        continue
+    mdir = os.path.join(msg_root, sid)
+    os.makedirs(mdir, exist_ok=True)
+    with open(os.path.join(mdir, "messages.json"), "a") as f:
+        f.write(json.dumps(d) + "\n")
+PY
+    then
+        echo -e "${RED}✗ Failed to read opencode.db: $DB_PATH${NC}" >&2
+        exit 1
+    fi
+    STORAGE="$DB_TMP"
+    SOURCE_LABEL="$DB_PATH"
+elif [[ ! -d "$STORAGE/message" ]]; then
     echo -e "${RED}✗ OpenCode storage not found: $STORAGE${NC}" >&2
-    echo "  Set OPENCODE_STORAGE or pass --storage to point at it." >&2
+    echo "  Set OPENCODE_STORAGE, pass --storage (legacy JSON), or --db (SQLite)." >&2
     exit 1
 fi
 
+export SOURCE_LABEL
 mkdir -p "$DATA_DIR"
 
 # History mode works regardless of whether sessions exist yet
@@ -153,7 +223,7 @@ jq -s '
     {
         generated: (now * 1000 | floor),
         project: (env.WORKSPACE_ROOT // ""),
-        source: (env.STORAGE // ""),
+        source: (env.SOURCE_LABEL // ""),
         sessions: length,
         totals: {
             input:     (map(.input)     | add),
@@ -201,7 +271,7 @@ echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━
 echo -e "${BOLD}${CYAN}  OpenCode Token Usage — ${BOLD}${GREEN}$SESS${CYAN} sessions${NC}"
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "  ${BLUE}Project:${NC}    $WORKSPACE_ROOT"
-echo -e "  ${BLUE}Source:${NC}     $STORAGE"
+echo -e "  ${BLUE}Source:${NC}     $SOURCE_LABEL"
 echo -e "  ${BLUE}Snapshot:${NC}   $LATEST_JSON"
 echo ""
 echo -e "${BOLD}Tokens${NC}"
