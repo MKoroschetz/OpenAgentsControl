@@ -2,10 +2,19 @@
 
 # pg_backup.sh - Full cluster backup for aspaDB
 # **Project**: aspaDB-workbench | **Path**: workbench/scripts/pg_backup.sh
-# **Version**: v1.6.0 | **Last Updated**: 2026-08-16 | **Author**: Manfred Koroschetz/AI
+# **Version**: v1.6.1 | **Last Updated**: 2026-08-17 | **Author**: Manfred Koroschetz/AI
 # **License**: SPDX-License-Identifier: MIT
 #
 # ## Changelog
+# - v1.6.1 (2026-08-17): Two symlink-copy bugs found while reviewing the
+#   aspa_restore chain: (1) aspa_backup was copied with plain `cp -a`, which
+#   preserves it AS a symlink - since the host symlink's target is relative
+#   (./DB_Backup/aspa_backup.sh), the copy dangled inside the backup's own
+#   IOTstack/ dir (no DB_Backup/ subdirectory there). Now uses the same `cp -fL`
+#   dereference as aspa_restore already did, unified into one loop. (2)
+#   aspa_restore.sh itself was never copied into utilities/ (only the
+#   dereferenced IOTstack/aspa_restore existed) - every sibling script
+#   (pg_restore.sh, pg_maintenance.sh, etc.) lands there; added for parity.
 # - v1.6.0 (2026-08-16): aspa_restore wrapper copied into <backup>/IOTstack/ -
 #   cp -fL resolves the host symlink so the backup carries a self-contained copy
 #   (portable to other hosts, e.g. dev). Guarded: only copied when present.
@@ -361,18 +370,23 @@ cp -af "${BACKUP_DIR}pg_backup_rotated.sh" "${FINAL_BACKUP_DIR}utilities/pg_back
 cp -af "${BACKUP_DIR}pg_backup.config" "${FINAL_BACKUP_DIR}utilities/pg_backup.config"
 cp -af "${BACKUP_DIR}pg_maintenance.sh" "${FINAL_BACKUP_DIR}utilities/pg_maintenance.sh"
 cp -af "${BACKUP_DIR}pg_restore.sh" "${FINAL_BACKUP_DIR}utilities/pg_restore.sh"
+cp -af "${BACKUP_DIR}aspa_restore.sh" "${FINAL_BACKUP_DIR}utilities/aspa_restore.sh"
 cp -af "${BACKUP_DIR}aspa_IngresCleanup.sh" "${FINAL_BACKUP_DIR}utilities/aspa_IngresCleanup.sh"
 cp -af "${BACKUP_DIR}.pgpass" "${FINAL_BACKUP_DIR}utilities/.pgpass"
 chmod 600 "${FINAL_BACKUP_DIR}utilities/.pgpass"
 
-cp -a "${DOCKER_COMPOSE_DIR}aspa_backup" "${FINAL_BACKUP_DIR}IOTstack/aspa_backup" 2>/dev/null || true
-# aspa_restore wrapper: cp -fL resolves the host symlink -> self-contained copy
-# (portable to other hosts). Guarded: only copied when present on the host.
-if [ -f "${DOCKER_COMPOSE_DIR}aspa_restore" ]; then
-        cp -fL "${DOCKER_COMPOSE_DIR}aspa_restore" "${FINAL_BACKUP_DIR}IOTstack/aspa_restore"
-        chmod +x "${FINAL_BACKUP_DIR}IOTstack/aspa_restore"
-        echo "   aspa_restore wrapper copied to IOTstack/"
-fi
+# Host symlinks (aspa_backup, aspa_restore): -fL DEREFERENCES the symlink into
+# a self-contained, portable copy - NOT a symlink. Both point at a RELATIVE
+# target (e.g. ./DB_Backup/aspa_restore.sh); copied as a symlink verbatim, that
+# target dangles inside the backup's own IOTstack/ dir, which has no DB_Backup/
+# subdirectory of its own. Guarded: only copied when present on the host.
+for wrapper in aspa_backup aspa_restore; do
+        if [ -f "${DOCKER_COMPOSE_DIR}${wrapper}" ]; then
+                cp -fL "${DOCKER_COMPOSE_DIR}${wrapper}" "${FINAL_BACKUP_DIR}IOTstack/${wrapper}"
+                chmod +x "${FINAL_BACKUP_DIR}IOTstack/${wrapper}"
+                echo "   ${wrapper} wrapper copied to IOTstack/"
+        fi
+done
 cp -a /var/spool/cron/crontabs/root "${FINAL_BACKUP_DIR}crontabs/root" 2>/dev/null || true
 
 echo -e "\nAll database backups complete!"
