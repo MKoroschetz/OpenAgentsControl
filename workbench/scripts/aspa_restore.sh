@@ -2,10 +2,19 @@
 
 # aspa_restore.sh - host-level restore wrapper for the aspaDB postgres container.
 # **Project**: aspaDB-workbench | **Path**: workbench/scripts/aspa_restore.sh
-# **Version**: v1.2.1 | **Last Updated**: 2026-08-17 | **Author**: Manfred Koroschetz/AI
+# **Version**: v1.2.2 | **Last Updated**: 2026-08-17 | **Author**: Manfred Koroschetz/AI
 # **License**: SPDX-License-Identifier: MIT
 #
 # ## Changelog
+# - v1.2.2 (2026-08-17): PGDATA_TARGET auto-detection - this wrapper builds its
+#   own throwaway config for pg_restore.sh (HOSTNAME/PORT/PGPWDFILE only),
+#   which REPLACES pg_backup.config entirely rather than layering on it, so
+#   PGDATA_TARGET was always empty on every restore run through the wrapper -
+#   pg_restore.sh's stage_config() silently skipped activating the backup's
+#   pg_hba.conf every time, regardless of what pg_backup.config had set. Now
+#   auto-detected from the container's PGDATA env var + matching bind mount
+#   (version-portable, survives container recreation) and passed through.
+#   ASPA_RESTORE_PGDATA_TARGET overrides.
 # - v1.2.1 (2026-08-17): Fixed a silent crash in host-port resolution - `docker
 #   port` only reports mappings for a RUNNING container, but this ran before
 #   the docker stop/start below, so a container already stopped when the
@@ -166,6 +175,26 @@ if [ -z "$PORT" ]; then
 fi
 [ -z "$PORT" ] && PORT="5432"
 
+# Resolve the target PGDATA (so pg_restore.sh's stage_config can ACTIVATE
+# pg_hba.conf from the backup - otherwise it's silently skipped). Auto-detected
+# from the container's PGDATA env var + matching bind mount (version-portable,
+# survives container recreation - no hardcoded host path). This wrapper builds
+# its own throwaway config for pg_restore.sh (below), which replaces
+# pg_backup.config entirely rather than layering on it, so PGDATA_TARGET must
+# be resolved here too, not just left to pg_backup.config.
+# ASPA_RESTORE_PGDATA_TARGET overrides.
+PGDATA_TARGET="${ASPA_RESTORE_PGDATA_TARGET:-}"
+if [ -z "$PGDATA_TARGET" ]; then
+        CONTAINER_PGDATA=$(docker inspect "$CONTAINER" \
+                --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+                | sed -n 's/^PGDATA=//p')
+        if [ -n "$CONTAINER_PGDATA" ]; then
+                PGDATA_TARGET=$(docker inspect "$CONTAINER" \
+                        --format '{{range .Mounts}}{{if eq .Destination "'"$CONTAINER_PGDATA"'"}}{{.Source}}{{end}}{{end}}' \
+                        2>/dev/null || true)
+        fi
+fi
+
 # Restore config + passfile: connect over TCP to the container's published port.
 # The utilities config defaults to the unix socket (not present on the host) and
 # "localhost" would also select the socket path in pg_restore.sh, so use
@@ -194,6 +223,7 @@ chmod 600 "$TMP_PGPASS"
 echo "HOSTNAME=127.0.0.1" > "$TMP_CONFIG"
 echo "PORT=$PORT" >> "$TMP_CONFIG"
 echo "PGPWDFILE=$TMP_PGPASS" >> "$TMP_CONFIG"
+[ -n "$PGDATA_TARGET" ] && echo "PGDATA_TARGET=$PGDATA_TARGET" >> "$TMP_CONFIG"
 
 # Never leave the container stopped - restart it on any exit path.
 cleanup() {
