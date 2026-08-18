@@ -7,6 +7,11 @@
 # **License**: SPDX-License-Identifier: MIT
 #
 # ## Changelog
+# - v1.1.1 (2026-08-18): PG17-era cron usage — run INSIDE the container
+#   (`docker exec -u postgres aspadb /mnt/DB-Backup/aspa_IngresCleanup.sh`), not
+#   host-side (no host socket mount on the postgres17 container). Tooling must
+#   live in the container-mounted backup dir (host: <IOTstack>/DB_Backup,
+#   in-container: /mnt/DB-Backup), writable by UID 999.
 # - v1.1.0 (2026-08-11): Fix -c parsing (was double-sourced: custom config then
 #                        default overrode it), simplify PGFUNCTIONTORUN quoting,
 #                        ${ECHO}, [ -z ] tests, quoted source, add SUCCESS logging
@@ -15,7 +20,10 @@
 # - v1.0.0 (2022-10-02): Modified to use UNIX Socket (MK)
 #
 # Usage (cron - see A4: recommend keeping APP functions in pg_agent, not cron):
+#   # PG12 era (host socket mount): run directly on the DB host
 #   0,15,30,45 7-20 * 3-5 * /mnt/data/aspadata/DB-Backup/aspa_IngresCleanup.sh
+#   # PG17 era (postgres17 container, no host socket): run INSIDE the container
+#   0,15,30,45 7-20 * 3-5 * docker exec -u postgres aspadb /mnt/DB-Backup/aspa_IngresCleanup.sh
 #
 # Executes: select * from aspa."IngresCleanup"();
 # NOTE: File/function name "Ingres" vs pg_agent job name "Ingress" - see workbench

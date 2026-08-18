@@ -6,6 +6,12 @@
 # **License**: SPDX-License-Identifier: MIT
 #
 # ## Changelog
+# - v1.6.2 (2026-08-18): Cron usage documented for the PG17 era — run INSIDE the
+#   container (`docker exec -u postgres aspadb /mnt/DB-Backup/pg_backup.sh --verify`),
+#   not host-side (the postgres17 container has no host socket mount). Tooling must
+#   live in the container-mounted backup dir (host: <IOTstack>/DB_Backup, in-container:
+#   /mnt/DB-Backup), writable by UID 999. DOCKER_COMPOSE_DIR in pg_backup.config must
+#   point at the in-container path (/mnt/DB-Backup/) with a synced docker-compose.yml.
 # - v1.6.1 (2026-08-17): Two symlink-copy bugs found while reviewing the
 #   aspa_restore chain: (1) aspa_backup was copied with plain `cp -a`, which
 #   preserves it AS a symlink - since the host symlink's target is relative

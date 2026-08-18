@@ -1,11 +1,13 @@
 # PostgreSQL 12.13 → 17.11 Upgrade Guide (Debian 10/13 → Debian 13)
 
 **Project**: aspaDB-workbench | **Path**: docs/CORE-PLATFORM-UPGRADE.md
-**Version**: v1.10.2 | **Last Updated**: 2026-08-17
+**Version**: v1.11.1 | **Last Updated**: 2026-08-18
 **Author**: Manfred Koroschetz/AI
 **License**: SPDX-License-Identifier: MIT
 
 ## Changelog
+- v1.11.1 (2026-08-18): **Dev crontab fixed for the PG17 era** (follow-up to A.10). The dev crontab still ran the old host-side backup entries (`/mnt/data/aspadata/DB-Backup/*.sh`), which can no longer reach the DB — the postgres17 container has no host socket mount. Applied the A.9 post-cutover cron change: all 4 DB jobs now run **in-container** via `docker exec -u postgres aspadb /mnt/DB-Backup/<script>` (container name is `aspadb` lowercase — the doc's earlier `aspaDB`/`postgres17` examples were wrong and would not resolve). Prerequisites discovered + fixed: (1) the backup tooling (scripts + `pg_backup.config` + `.pgpass`) must live in the **container-mounted** dir (host `<IOTstack>/DB_Backup` → in-container `/mnt/DB-Backup`) — copied there; (2) the mounted dir + `log/` + `.pgpass` must be writable by the container `postgres` user (UID 999) — chowned; (3) `pg_backup.config` `DOCKER_COMPOSE_DIR` must point at the in-container path `/mnt/DB-Backup/` with a synced `docker-compose.yml` (the live compose under `/root/IOTstack/` is unreachable in-container, `/root` is 700) — updated + synced. **All 4 cron scripts verified in-container (exit 0)**: pg_maintenance (ANALYZE+VACUUM all 9 DBs), pg_backup (full cluster, plain+custom+globals+configs+compose snapshot), pg_backup_rotated, aspa_IngresCleanup. Script headers updated (pg_maintenance v1.2.1, pg_backup v1.6.2, pg_backup_rotated v1.1.1, aspa_IngresCleanup v1.1.1) and re-deployed to both host dirs. Validation matrix row 10 dev → ☑. **Part B (prod) must apply the same cron change at B.9** — see §B.9 note.
+- v1.11.0 (2026-08-18): **A.10 executed — dev upgrade COMPLETE (Phase 1 ✅)**. The old PG 12.13 container (`aspaDB-old`, stopped since the A.9 cutover) was reinstated on **side port 5435** with its original data volume for validation, then retired: (1) reinstated container booted cleanly (PG 12.13, `en_US.utf8`, 11 DBs incl. `aspadb`); (2) regression suite (`regression-list.sql`, all 4 tiers) ran against 5435 with **0 ERROR lines** on the *current-era* objects — the only failures were 7 `does not exist` errors for objects created after the old volume's 2025-09-05 snapshot (`EAR_export_APAYMENT_2026`, `EAR_export_SORT_2026`, `aspa.IngressPending_Old`), confirming the documented "old volume = stale pre-migration snapshot" finding; `aspa.inventory` 35,919 rows (old snapshot) vs 73,798 on PG17. Expected `pg_stat_statements` unrecognized-parameter warnings in the PG12.13 boot log (lines 692–693 of the old `postgresql.conf`) — a PG12 limitation, part of the migration rationale, ignorable. (3) Retired: `docker stop` + `docker rm aspaDB-old`, `docker rmi postgres:12.13` (~370MB reclaimed: docker images 21.35GB → 20.98GB). Checkpoint verified: only `aspadb` (PG 17.11) on 5432, old container + image gone. **Dev (Part A) Phase 1 is complete; Part B (prod) is the remaining work.**
 - v1.10.2 (2026-08-17): **A.9 rollback drill executed on dev** — validated the rename-based cutover + rollback mechanism in both directions (PG17→PG12→PG17) against the real host. Drill findings, incorporated into A.9/§11: (1) the old PG12 container may **not exist** on a host (compose service commented out, no rename artifact) — the drill recreated it from `postgres:12.13` + the old data volume before exercising rollback; the rollback flow below now includes that recreation step. (2) **The old PG12 data volume is a stale pre-migration snapshot** — on dev it was last written 2025-09-05 and holds a different dataset than the PG17 cluster on 5432; rolling back to the old container restores the **old data state**, NOT current data. For a data-current rollback use the backup/restore tooling (`pg_backup.sh` → `pg_restore.sh`) instead. (3) Post-drill state matches the A.9 checkpoint exactly: `aspadb` = PG 17.11 healthy on 5432, `aspaDB-old` stopped + intact; PG17 verified unchanged (9 DBs, `aspa.inventory` 73,798 rows pre/post drill). A.8/A.10 remain for a follow-up session.
 - v1.10.1 (2026-08-17): **`aspa_restore.sh` bug fixes from dev testing** (v1.1.1 → v1.2.3), found by actually running restores on dev rather than reading the code: (1) fixed a **silent crash** — port resolution used `docker port`, which only reports mappings for a *running* container; queried before the wrapper's own stop/start, it died instantly under `set -euo pipefail` with **zero output** whenever the target was already stopped at invocation (the common disaster-recovery case) — now reads `HostConfig.PortBindings` via `docker inspect` (works regardless of run state). (2) restored the **executable bit** lost when the script was committed `100644` in 7bc6352 — invoking it directly (e.g. via the `/root/IOTstack/aspa_restore` symlink) needed a manual `chmod +x`; `bash aspa_restore.sh` masked the gap. (3) **`PGDATA_TARGET` now auto-detected** from the container's `PGDATA` env var + matching bind mount — the wrapper's own throwaway config for `pg_restore.sh` previously always left it empty (independent of what `pg_backup.config` had), so `pg_hba.conf` activation was silently skipped on every wrapper-driven restore. (4) **bare backup names now resolve** via `SCRIPT_DIR` (e.g. `aspa_restore 2026-08-17-manual` from any cwd) — previously required the full path relative to the invocation directory. Also `pg_backup.sh` v1.6.1: `aspa_backup`'s symlink copy into `<backup>/IOTstack/` was a **dangling relative symlink** (now dereferenced with `cp -fL`, same as `aspa_restore` already did); `aspa_restore.sh` now also copied into `<backup>/utilities/` for parity with its sibling scripts. All four `aspa_restore.sh` fixes verified end-to-end on dev against `2026-08-17-manual` (full cluster restore through the actual symlink; `PGDATA_TARGET` + bare-name resolution verified via non-destructive dry-runs that stopped short of touching the live container). A.5b updated below.
 - v1.10.0 (2026-08-16): **Host-level restore wrapper `aspa_restore.sh`** (v1.1.1) — restore without shelling into the container: stop → start → run the backup's `utilities/pg_restore.sh` over TCP (auto-detects the published host port, e.g. dev 5434) → restart so pgagent re-registers fresh. Installed on dev and tested end-to-end (2026-08-17-manual → postgres17: all DBs restored, pgagent reconciled — 0 orphaned jobagentids, sequence synced). `pg_backup.sh` v1.6.0 copies the wrapper into `<backup>/IOTstack/` (self-contained, portable). `pg_restore.sh` v2.4.1: config `PORT` support + `${VAR:-}` guards for minimal configs. `entrypoint.sh` v1.2.0: **fast shutdown (SIGINT)** — SIGTERM is a smart shutdown that hangs on active connections past docker stop's 10s grace (SIGKILL + crash recovery on every stop); now clean ~0.4s shutdowns (verified on dev). See A.5b.
@@ -66,15 +68,15 @@
 
 | Env | Phase | Status | Last updated | Next action |
 |-----|-------|--------|--------------|-------------|
-| Dev (Part A) | Phase 1 — A.1–A.9 executed | 🟡 In progress | 2026-08-17 | A.10 retire old |
-| Prod (Part B) | Phase 2 — planned | 🔲 Not started | 2026-08-17 | Wait for dev to pass Phase 1 |
+| Dev (Part A) | Phase 1 — A.1–A.10 executed | ✅ Complete | 2026-08-18 | Phase 2: Part B (prod) |
+| Prod (Part B) | Phase 2 — planned | 🔲 Not started | 2026-08-18 | Wait for dev to pass Phase 1 ✅ (done — start Part B) |
 
 ### Phase checklist
 
 | Phase | Scope | Checkpoints | Status |
 |-------|-------|-------------|--------|
 | **Phase 0** | §5 inventory + backup baseline | §4 baseline recorded; Docker versions captured (§5); DB size known | 🔲 |
-| **Phase 1 — DEV** | Part A (A.1–A.10) | A.1–A.10 all ✅ (§8) | 🔲 |
+| **Phase 1 — DEV** | Part A (A.1–A.10) | A.1–A.10 all ✅ (§8) | ✅ |
 | **Phase 2 — PROD** | Part B (B.1–B.10) | B.1–B.10 all ✅ (§9) | 🔲 |
 | **Phase 3** | Full-stack soak + season readiness | Validation matrix §10 all ☐→☑; soak complete; Feb 2027 deadline met | 🔲 |
 
@@ -134,8 +136,8 @@ gantt
 | A.6 integrity check | 2026-08-16 | Manfred/AI | 85 tables aspa; schemas public/tax_reports/winery; roles mkoroschetz/reporter/grafana_user; pgagent 4.2 (7 jobs, 11 schedules); pg_stat_statements 1.11 | ✅ | Counts match old cluster |
 | A.7 extensions/config | 2026-08-16 | Manfred/AI | pg_hba ACTIVATED on restore; postgresql.conf/auto.conf reference-only; C.UTF-8 collation dropped everywhere (0 refs) | ✅ | Prod: 5 indexes rebuilt with en_US.utf8 (aspadb 2, aspadb2023 3) |
 | A.8 regression | 2026-08-17 | Manfred/AI | New suite `workbench/regression/` (T0–T4: server/locale, 11 EAR_export_* functions, 109 views, structure/roles/inventory, catalog). Dev PG17 baseline + prod PG12 run both PASS (0 ERROR); reports byte-identical except version line + 2 dev-only DBs → dev ≡ prod, zero drift. 5 broken `workbench/sql/` reports rewritten + validated on both. Pre-existing app bug found: `EAR_export_SORT_n` fails on 2026 data (suite uses 2025) | ✅ | See §A.8 addendum |
-| A.9 cutover | | | | | |
-| A.10 retire old | | | | | |
+| A.9 cutover | 2026-08-17 | Manfred/AI | Rename-based cutover executed + rollback drill validated both directions (PG17→PG12→PG17). Post-drill state: `aspadb` = PG 17.11 healthy on 5432, `aspaDB-old` stopped + intact (old volume = stale 2025-09-05 pre-migration snapshot). PG17 verified unchanged pre/post drill (9 DBs, inventory 73,798 rows) | ✅ | See §A.9 drill notes |
+| A.10 retire old | 2026-08-18 | Manfred/AI | Old PG12.13 reinstated on side port 5435 with original volume for validation → booted clean (11 DBs, en_US.utf8), regression suite 0 ERROR on current-era objects (7 `does not exist` = post-2025-09-05 objects, expected on the stale snapshot); then retired: `docker rm aspaDB-old` + `docker rmi postgres:12.13` (~370MB reclaimed). Only `aspadb` (PG 17.11) on 5432. **Dev upgrade COMPLETE** | ✅ | Report: `workbench/reports/regression/old-pg12-5435-2026-08-18.txt` |
 | *(planned)* B.1 pre-flight backup | | | | | |
 | *(planned)* B.2 new host + Docker pin | | | | | |
 | *(planned)* B.3 deploy image | | | | | |
@@ -627,6 +629,11 @@ docker compose up -d postgres
 ```
 
 > **Rollback drill notes (validated 2026-08-17 on dev):**
+> - ⚠️ **A.10 (2026-08-18) retired the old container + `postgres:12.13` image** —
+>   the recreation path below is **historical** (drill-time only). Post-A.10 dev
+>   rollback is **restore-only** via backup tooling (§11). The old data volume
+>   (`/root/IOTstack/volumes/postgres/data`) is untouched and still holds the
+>   stale 2025-09-05 snapshot for reference.
 > - If `aspaDB-old` does **not exist** (e.g. the host never performed the rename — old
 >   service just commented out in compose), recreate it from the image + old data
 >   volume before rolling back:
@@ -652,13 +659,28 @@ docker compose up -d postgres
 > host socket mount** (removed in compose v2.0.1 — it broke side-by-side), so
 > host-side `pg_maintenance.sh` / `pg_backup.sh` can no longer reach the DB via
 > `/var/run/postgresql`. Update the host crontab to run them **inside the
-> container** (peer auth as `postgres`):
+> container** (peer auth as `postgres`). **Container name is `aspadb`**
+> (lowercase, as created by compose — `aspaDB`/`postgres17` will NOT resolve):
 > ```bash
-> 8 2 * * * docker exec -u postgres aspaDB /mnt/DB-Backup/pg_maintenance.sh
-> 6 4 * 2,6 * docker exec -u postgres aspaDB /mnt/DB-Backup/pg_backup.sh --verify
+> # PG17-era dev crontab (applied 2026-08-18, all 4 jobs verified in-container)
+> 8 2 * * * docker exec -u postgres aspadb /mnt/DB-Backup/pg_maintenance.sh
+> 8 3 * 3-6 * docker exec -u postgres aspadb /mnt/DB-Backup/pg_backup_rotated.sh
+> 6 4 * 2,6 * docker exec -u postgres aspadb /mnt/DB-Backup/pg_backup.sh --verify
+> 0,15,30,45 7-20 * 3-5 * docker exec -u postgres aspadb /mnt/DB-Backup/aspa_IngresCleanup.sh
 > ```
-> (`pg_maintenance.sh` v1.2.0 + `pg_restore.sh` v2.0.2 force the unix socket
-> when running inside a container — `/.dockerenv` detection.)
+> **Prerequisites (verified on dev 2026-08-18):**
+> - The backup tooling (scripts + `pg_backup.config` + `.pgpass`) must be copied
+>   into the **container-mounted** backup dir — host `<IOTstack>/DB_Backup`,
+>   in-container `/mnt/DB-Backup` (the old host-side dir `/mnt/data/aspadata/DB-Backup`
+>   is NOT mounted into the container).
+> - The mounted dir + `log/` + `.pgpass` must be writable by the container
+>   `postgres` user (**UID 999**): `chown 999:999 <dir> <dir>/log <dir>/.pgpass`.
+> - `pg_backup.config` `DOCKER_COMPOSE_DIR` must point at the **in-container**
+>   path `/mnt/DB-Backup/` with a synced `docker-compose.yml` copy there (the
+>   live compose at `/root/IOTstack/` is unreachable from inside the container —
+>   `/root` is mode 700). Refresh the copy whenever the compose changes.
+> - (`pg_maintenance.sh` v1.2.0 + `pg_restore.sh` v2.0.2 force the unix socket
+>   when running inside a container — `/.dockerenv` detection.)
 
 ### A.10 — Retire old container (after 1 week soak)
 
@@ -668,6 +690,30 @@ docker rmi <old-image>          # remove Debian-11/PG12 image after confirmed st
 ```
 
 ✅ **CHECKPOINT A.10:** `docker ps` shows only `pg17`; old image removed; disk reclaimed. **Dev upgrade COMPLETE.**
+
+> **Executed 2026-08-18:** the old container was **reinstated on side port 5435**
+> (not 5432 — PG17 owns it) with its original data volume for validation before
+> retirement, per the user-approved flow:
+>
+> 1. **Reinstate:** recreated `aspaDB-old` from `postgres:12.13` on `5435:5432`
+>    with the same volume (`/root/IOTstack/volumes/postgres/data`) + env
+>    (`POSTGRES_PASSWORD`, `PGDATA=/var/lib/postgresql/data`).
+> 2. **Validate:** clean boot (PG 12.13, `en_US.utf8`, 11 DBs incl. `aspadb`);
+>    `aspa.inventory` 35,919 rows (= the stale 2025-09-05 snapshot, expected);
+>    regression suite `regression-list.sql` ran against 5435 — **0 ERROR lines**
+>    on all current-era objects; the only 7 ERRORs were `does not exist` for
+>    objects created after the snapshot (`EAR_export_APAYMENT_2026`,
+>    `EAR_export_APAYMENT_LEGACY`, `EAR_export_SORT_2026`, `aspa.IngressPending_Old`),
+>    confirming the documented stale-snapshot finding. Note: `reporter` role
+>    absent on the snapshot (added post-2025-09-05); `grafana_user` present.
+>    Expected `pg_stat_statements` unrecognized-parameter warnings (PG12.13
+>    limitation, postgresql.conf lines 692–693) — ignorable.
+> 3. **Retire:** `docker stop aspaDB-old` → `docker rm aspaDB-old` →
+>    `docker rmi postgres:12.13` (~370MB reclaimed; docker images 21.35GB →
+>    20.98GB).
+> 4. **Verify:** only `aspadb` (PG 17.11) on 5432; old container + image gone.
+>
+> Validation report: `workbench/reports/regression/old-pg12-5435-2026-08-18.txt`.
 
 ---
 
@@ -848,6 +894,22 @@ docker stop <pg-container>        # old container stopped — do NOT delete yet
 
 ✅ **CHECKPOINT B.9:** application fully operational on PG 17; end-to-end business flows pass (inventory, sorting, delivery, sales, CRM smoke tests); monitoring dashboards (Grafana) showing data.
 
+> **B.9 cron change (apply at cutover — same as dev A.9, verified 2026-08-18):**
+> the new prod PG17 container has **no host socket mount**, so the host crontab
+> must run backup/maintenance **inside the container** (peer auth as `postgres`).
+> Container name is `aspadb` (lowercase). Prerequisites: copy the backup tooling
+> (scripts + `pg_backup.config` + `.pgpass`) into the container-mounted backup dir
+> (prod host `<IOTstack>/DB_Backup` → in-container `/mnt/DB-Backup`); chown the
+> mounted dir + `log/` + `.pgpass` to UID 999; set `DOCKER_COMPOSE_DIR=/mnt/DB-Backup/`
+> in the config with a synced `docker-compose.yml` there. Full crontab block:
+> ```bash
+> 8 2 * * * docker exec -u postgres aspadb /mnt/DB-Backup/pg_maintenance.sh
+> 8 3 * 3-6 * docker exec -u postgres aspadb /mnt/DB-Backup/pg_backup_rotated.sh
+> 6 4 * 2,6 * docker exec -u postgres aspadb /mnt/DB-Backup/pg_backup.sh --verify
+> 0,15,30,45 7-20 * 3-5 * docker exec -u postgres aspadb /mnt/DB-Backup/aspa_IngresCleanup.sh
+> ```
+> (Details + rationale: §A.9 post-cutover cron note.)
+
 ### B.10 — Quarantine old host (retain for rollback window)
 
 - Keep old Debian 10 host **offline but intact** for 2–4 weeks (rollback window, §11).
@@ -861,19 +923,27 @@ docker stop <pg-container>        # old container stopped — do NOT delete yet
 
 | # | Check | Dev | Prod |
 |---|-------|-----|------|
-| 1 | `SELECT version();` → 17.11 | ☐ | ☐ |
-| 2 | Only PG 17 container running in both envs (after A.10 / B.10) | ☐ | ☐ |
-| 3 | Locale: en_US.utf8 / UTF8 / libc (prod AND dev — all DBs + templates) | ☐ | ☐ |
-| 4 | 85 tables in `aspa`; schemas public/tax_reports/winery present | ☐ | ☐ |
-| 5 | Roles mkoroschetz/reporter/grafana_user + grants OK | ☐ | ☐ |
-| 6 | pg_stat_statements + pgagent loaded | ☐ | ☐ |
-| 7 | `reporter` read-only SELECT works | ☐ | ☐ |
-| 8 | Row counts match pre-upgrade baseline | ☐ | ☐ |
-| 9 | App smoke tests (inventory/sorting/delivery/sales/CRM) pass | ☐ | ☐ |
-| 10 | Backups running on new schedule (crontab on new prod host) | ☐ | ☐ |
+| 1 | `SELECT version();` → 17.11 | ☑ | ☐ |
+| 2 | Only PG 17 container running in both envs (after A.10 / B.10) | ☑ | ☐ |
+| 3 | Locale: en_US.utf8 / UTF8 / libc (prod AND dev — all DBs + templates) | ☑ | ☐ |
+| 4 | 85 tables in `aspa`; schemas public/tax_reports/winery present | ☑ | ☐ |
+| 5 | Roles mkoroschetz/reporter/grafana_user + grants OK | ☑ | ☐ |
+| 6 | pg_stat_statements + pgagent loaded | ☑ | ☐ |
+| 7 | `reporter` read-only SELECT works | ☑ | ☐ |
+| 8 | Row counts match pre-upgrade baseline | ☑ | ☐ |
+| 9 | App smoke tests (inventory/sorting/delivery/sales/CRM) pass | ☑ | ☐ |
+| 10 | Backups running on new schedule (crontab on new prod host) | ☑ | ☐ |
 | 11 | Monitoring (Grafana/pgagent) reporting | ☐ | ☐ |
 | 12 | **Docker Engine + Compose version identical on dev and prod** (engine, server, storage driver) | ☐ | ☐ |
-| 13 | Old container (dev) / old host (prod) quarantined / dropped (after soak) | ☐ | ☐ |
+| 13 | Old container (dev) / old host (prod) quarantined / dropped (after soak) | ☑ | ☐ |
+
+> **Dev note (2026-08-18):** dev crontab updated to the PG17-era **docker-exec
+> form** (all 4 DB jobs run in-container as `postgres`; container name
+> `aspadb`). Tooling copied into the container-mounted dir, ownership fixed
+> (UID 999), `DOCKER_COMPOSE_DIR` → in-container path, and every cron script
+> verified in-container (pg_maintenance, pg_backup, pg_backup_rotated,
+> aspa_IngresCleanup — all exit 0). Dev has no Grafana container (row 11 ☐ is
+> expected for dev).
 
 ---
 
@@ -881,19 +951,18 @@ docker stop <pg-container>        # old container stopped — do NOT delete yet
 
 **Trigger:** any checkpoint fails with no acceptable mitigation, or app regression fails after cutover.
 
-**Dev (A):** old container is only *stopped* at A.9, never deleted until A.10 → **restart the old container and point the app back**. The old data volume is untouched throughout. *(Mechanism validated 2026-08-17 rollback drill — see A.9 drill notes.)*
+**Dev (A):** the old PG 12 container + `postgres:12.13` image were **retired at A.10 (2026-08-18)** — the container-level rollback path no longer exists on dev. Rollback is now **backup/restore only**: restore the freshest `pg_backup.sh` dump into the PG17 container (`pg_restore.sh` / `aspa_restore.sh`). *(Container-level mechanism was validated during the 2026-08-17 A.9 rollback drill before retirement — see A.9 drill notes.)*
 
 ```bash
-docker start <pg-container>        # old PG 12 / Debian 11 container
-# revert app DATABASE_URL / run.sh -e dev port to the old container → done. (Then investigate; never force-forward.)
+# Dev rollback after A.10 (restore-only; old container no longer exists):
+./workbench/scripts/pg_restore.sh <backup-dir>    # or host wrapper: aspa_restore.sh <backup-name>
+# (investigate root cause first; never force-forward)
 ```
 
-> **Dev data caveat (drill finding):** the old container's volume holds the **stale
-> pre-migration dataset**, not the current one — a container-level rollback returns
-> to the old data state. For a rollback that preserves *current* data, restore from
-> the freshest `pg_backup.sh` dump (`pg_restore.sh`) instead. Validate the old
-> container boots from its volume *before* cutover day if the container-level
-> rollback path is to be relied on.
+> **Dev data caveat (drill finding):** even pre-A.10, the old container's volume held the **stale
+> pre-migration dataset**, not the current one — a container-level rollback returned
+> to the old data state. The restore-only path above preserves *current* data from
+> the freshest `pg_backup.sh` dump. *(Post-A.10: only restore-based rollback is available.)*
 
 **Prod (B):**
 1. Re-route app/DNS back to the old host (kept intact in B.10) and restart the old PG container.

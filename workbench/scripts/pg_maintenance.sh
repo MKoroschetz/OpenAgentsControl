@@ -7,6 +7,8 @@
 # **License**: SPDX-License-Identifier: MIT
 #
 # ## Changelog
+# - v1.2.1 (2026-08-18): Corrected the PG17-era cron example — container name is
+#   `aspadb` (lowercase, as created by compose), not `postgres17`/`aspaDB`.
 # - v1.2.0 (2026-08-16): Force unix-socket connection when running inside a
 #   container (/.dockerenv) — the postgres17 container has NO host socket
 #   mount, so host-side cron must invoke via `docker exec -u postgres`.
@@ -19,7 +21,12 @@
 #   # PG12 era (host socket mount): run directly on the DB host
 #   8 2 * * * /mnt/data/aspadata/DB-Backup/pg_maintenance.sh
 #   # PG17 era (postgres17 container, no host socket): run INSIDE the container
-#   8 2 * * * docker exec -u postgres postgres17 /mnt/DB-Backup/pg_maintenance.sh
+#   8 2 * * * docker exec -u postgres aspadb /mnt/DB-Backup/pg_maintenance.sh
+#
+# NOTE: the backup tooling (scripts + pg_backup.config + .pgpass) must be
+# present in the container-mounted backup dir (host: <IOTstack>/DB_Backup,
+# in-container: /mnt/DB-Backup) — copy them there after any update. The
+# mounted dir must be writable by the container postgres user (UID 999).
 #
 # Runs ANALYZE then VACUUM on every non-template, connectable database
 # (same DB list as pg_restore.sh --maintenance-only). Invoke daily before

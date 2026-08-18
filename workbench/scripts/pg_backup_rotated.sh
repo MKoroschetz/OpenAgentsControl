@@ -7,12 +7,20 @@
 # **License**: SPDX-License-Identifier: MIT
 #
 # ## Changelog
+# - v1.1.1 (2026-08-18): PG17-era cron usage — run INSIDE the container
+#   (`docker exec -u postgres aspadb /mnt/DB-Backup/pg_backup_rotated.sh`), not
+#   host-side (no host socket mount on the postgres17 container). Tooling must
+#   live in the container-mounted backup dir (host: <IOTstack>/DB_Backup,
+#   in-container: /mnt/DB-Backup), writable by UID 999.
 # - v1.1.0 (2026-08-11): Fix -c config parsing, ${ECHO}, [ -z ] tests, mkdir -p,
 #                        guard optional copies, symlink resolution, standard header
 # - v1.0.0 (2023-01-17): Original rotated backup script (daily/weekly/monthly)
 #
 # Usage (cron):
+#   # PG12 era (host socket mount): run directly on the DB host
 #   8 3 * 3-6 * /mnt/data/aspadata/DB-Backup/pg_backup_rotated.sh
+#   # PG17 era (postgres17 container, no host socket): run INSIDE the container
+#   8 3 * 3-6 * docker exec -u postgres aspadb /mnt/DB-Backup/pg_backup_rotated.sh
 #
 # Rotation logic (naming suffix is REQUIRED by the pruning rules - do not remove):
 #   day-of-month == 1                  -> 2026-08-01-monthly  (prune all *-monthly)
