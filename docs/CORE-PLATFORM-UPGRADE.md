@@ -1,11 +1,13 @@
 # PostgreSQL 12.13 → 17.11 Upgrade Guide (Debian 10/13 → Debian 13)
 
 **Project**: aspaDB-workbench | **Path**: docs/CORE-PLATFORM-UPGRADE.md
-**Version**: v1.11.1 | **Last Updated**: 2026-08-18
+**Version**: v1.11.3 | **Last Updated**: 2026-08-18
 **Author**: Manfred Koroschetz/AI
 **License**: SPDX-License-Identifier: MIT
 
 ## Changelog
+- v1.11.3 (2026-08-18): **Phase 2 strategy change — prod host upgraded IN PLACE, not replaced.** Per user decision (A1 note), Part B no longer provisions a **new Docker host**; the existing prod host (172.20.61.220) is upgraded **in place**: (1) **OS upgrade** Debian 10.13 → 13.x (Trixie 13.3+, sequential 10→11→12→13 release upgrades) and (2) **Docker upgrade** 26.1.4/v2.27.0 → **29.3.0/v5.1.0** to match dev exactly (§7 sync policy). B.2 rewritten accordingly with a new **host-level snapshot/backup precondition** (the rollback anchor, since the host is no longer disposable); B.10 redefined as quarantine of the **old PG container + pre-upgrade host snapshot**; §1/§2/§4.1/§5/§6/§7/§9/§10/§11/§12 updated for consistency; new §6 risk row for the in-place 3-release OS upgrade. Container rebuild + dump/restore strategy unchanged.
+- v1.11.2 (2026-08-18): **Prod inventory + baseline recorded (§5) — Phase 0 ✅ complete.** Captured on prod host (172.20.61.220): Docker Engine **26.1.4** (build 5650f9b) · Compose **v2.27.0** · driver **overlay2** · host Debian **10.13** (EOL); `aspadb` DB size **339 MB** (dev: 255 MB); container config via `docker inspect aspaDB` (postgres:12.13, 5432:5432, unless-stopped, iotstack_default 172.30.4.19, binds incl. `/mnt/data/aspadata/DB-Backup` → `/mnt/DB-Backup`); pg_hba.conf (scram-sha-256 for 172.20.61.0/24, 192.168.1.0/24, 192.168.61.0/24, 172.30.0.0/16 + open `all all all` fallback; replication trust on localhost). ⚠️ **Docker version mismatch recorded: prod 26.1.4/v2.27.0 vs dev 29.3.0/v5.1.0 — B.2 must pin the new prod host to 29.3.0/v5.1.0.** Prod container name is `aspaDB` (capital DB) vs dev `aspadb` lowercase. Milestone actuals filled: §5 inventory 2026-08-18, A.9 cutover 2026-08-17, A.10 retire 2026-08-18.
 - v1.11.1 (2026-08-18): **Dev crontab fixed for the PG17 era** (follow-up to A.10). The dev crontab still ran the old host-side backup entries (`/mnt/data/aspadata/DB-Backup/*.sh`), which can no longer reach the DB — the postgres17 container has no host socket mount. Applied the A.9 post-cutover cron change: all 4 DB jobs now run **in-container** via `docker exec -u postgres aspadb /mnt/DB-Backup/<script>` (container name is `aspadb` lowercase — the doc's earlier `aspaDB`/`postgres17` examples were wrong and would not resolve). Prerequisites discovered + fixed: (1) the backup tooling (scripts + `pg_backup.config` + `.pgpass`) must live in the **container-mounted** dir (host `<IOTstack>/DB_Backup` → in-container `/mnt/DB-Backup`) — copied there; (2) the mounted dir + `log/` + `.pgpass` must be writable by the container `postgres` user (UID 999) — chowned; (3) `pg_backup.config` `DOCKER_COMPOSE_DIR` must point at the in-container path `/mnt/DB-Backup/` with a synced `docker-compose.yml` (the live compose under `/root/IOTstack/` is unreachable in-container, `/root` is 700) — updated + synced. **All 4 cron scripts verified in-container (exit 0)**: pg_maintenance (ANALYZE+VACUUM all 9 DBs), pg_backup (full cluster, plain+custom+globals+configs+compose snapshot), pg_backup_rotated, aspa_IngresCleanup. Script headers updated (pg_maintenance v1.2.1, pg_backup v1.6.2, pg_backup_rotated v1.1.1, aspa_IngresCleanup v1.1.1) and re-deployed to both host dirs. Validation matrix row 10 dev → ☑. **Part B (prod) must apply the same cron change at B.9** — see §B.9 note.
 - v1.11.0 (2026-08-18): **A.10 executed — dev upgrade COMPLETE (Phase 1 ✅)**. The old PG 12.13 container (`aspaDB-old`, stopped since the A.9 cutover) was reinstated on **side port 5435** with its original data volume for validation, then retired: (1) reinstated container booted cleanly (PG 12.13, `en_US.utf8`, 11 DBs incl. `aspadb`); (2) regression suite (`regression-list.sql`, all 4 tiers) ran against 5435 with **0 ERROR lines** on the *current-era* objects — the only failures were 7 `does not exist` errors for objects created after the old volume's 2025-09-05 snapshot (`EAR_export_APAYMENT_2026`, `EAR_export_SORT_2026`, `aspa.IngressPending_Old`), confirming the documented "old volume = stale pre-migration snapshot" finding; `aspa.inventory` 35,919 rows (old snapshot) vs 73,798 on PG17. Expected `pg_stat_statements` unrecognized-parameter warnings in the PG12.13 boot log (lines 692–693 of the old `postgresql.conf`) — a PG12 limitation, part of the migration rationale, ignorable. (3) Retired: `docker stop` + `docker rm aspaDB-old`, `docker rmi postgres:12.13` (~370MB reclaimed: docker images 21.35GB → 20.98GB). Checkpoint verified: only `aspadb` (PG 17.11) on 5432, old container + image gone. **Dev (Part A) Phase 1 is complete; Part B (prod) is the remaining work.**
 - v1.10.2 (2026-08-17): **A.9 rollback drill executed on dev** — validated the rename-based cutover + rollback mechanism in both directions (PG17→PG12→PG17) against the real host. Drill findings, incorporated into A.9/§11: (1) the old PG12 container may **not exist** on a host (compose service commented out, no rename artifact) — the drill recreated it from `postgres:12.13` + the old data volume before exercising rollback; the rollback flow below now includes that recreation step. (2) **The old PG12 data volume is a stale pre-migration snapshot** — on dev it was last written 2025-09-05 and holds a different dataset than the PG17 cluster on 5432; rolling back to the old container restores the **old data state**, NOT current data. For a data-current rollback use the backup/restore tooling (`pg_backup.sh` → `pg_restore.sh`) instead. (3) Post-drill state matches the A.9 checkpoint exactly: `aspadb` = PG 17.11 healthy on 5432, `aspaDB-old` stopped + intact; PG17 verified unchanged (9 DBs, `aspa.inventory` 73,798 rows pre/post drill). A.8/A.10 remain for a follow-up session.
@@ -48,7 +50,7 @@
 
 **Strategy:**
 - **Dev (container rebuild):** rebuild the PG container image on **Debian 13 + PG 17** (Docker host stays 13.3), migrate data via **logical dump/restore** — the most reliable path for a container-to-container, cross-OS move. Full regression test before prod.
-- **Prod (host + container + PG all change):** because everything runs in containers, the Docker host is **disposable infrastructure** → stand up a **new Docker host on Debian 13**, deploy the **same image validated on dev**, restore the dump. No in-place OS migration on Debian 10.
+- **Prod (host + container + PG all change):** the Docker host is **upgraded in place** — OS Debian 10.13 → **13.x (Trixie 13.3+)** via sequential release upgrades, Docker Engine/Compose upgraded to **match dev exactly (29.3.0 / v5.1.0)** — then deploy the **same image validated on dev**, restore the dump. A **host-level snapshot/backup is taken before the OS upgrade** (rollback anchor, §B.2/§11).
 
 **Golden rule:** Dev fully validated → prod. Prod: **verify backup before touching anything**. Any step fails → STOP → rollback (§11).
 
@@ -75,7 +77,7 @@
 
 | Phase | Scope | Checkpoints | Status |
 |-------|-------|-------------|--------|
-| **Phase 0** | §5 inventory + backup baseline | §4 baseline recorded; Docker versions captured (§5); DB size known | 🔲 |
+| **Phase 0** | §5 inventory + backup baseline | §4 baseline recorded; Docker versions captured (§5); DB size known | ✅ |
 | **Phase 1 — DEV** | Part A (A.1–A.10) | A.1–A.10 all ✅ (§8) | ✅ |
 | **Phase 2 — PROD** | Part B (B.1–B.10) | B.1–B.10 all ✅ (§9) | 🔲 |
 | **Phase 3** | Full-stack soak + season readiness | Validation matrix §10 all ☐→☑; soak complete; Feb 2027 deadline met | 🔲 |
@@ -84,9 +86,9 @@
 
 | Milestone | Target | Actual |
 |-----------|--------|--------|
-| §5 inventory complete | Aug 2026 | |
-| Dev cutover (A.9) | Sep 2026 | |
-| Dev retire (A.10) | Oct 2026 | |
+| §5 inventory complete | Aug 2026 | 2026-08-18 |
+| Dev cutover (A.9) | Sep 2026 | 2026-08-17 |
+| Dev retire (A.10) | Oct 2026 | 2026-08-18 |
 | Prod cutover (B.9) | Oct 2026 | |
 | Prod quarantine end (B.10) | Nov 2026 | |
 | **Season readiness (deadline)** | **Feb 2027** | |
@@ -112,7 +114,7 @@ gantt
     B.1–B.5 backup→restore           :prod1, after m_devcut, 2026-10-05
     B.6–B.8 integrity→regression     :prod2, after prod1, 5d
     B.9 cutover                      :milestone, m_prodcut, after prod2, 0d
-    B.10 quarantine old host         :prod3, after prod2, 2026-11-06
+    B.10 quarantine old container + host snapshot :prod3, after prod2, 2026-11-06
 
     section Phase 3 — Soak
     Off-season soak (extends to deadline) :soak, after prod3, 2027-01-29
@@ -139,7 +141,7 @@ gantt
 | A.9 cutover | 2026-08-17 | Manfred/AI | Rename-based cutover executed + rollback drill validated both directions (PG17→PG12→PG17). Post-drill state: `aspadb` = PG 17.11 healthy on 5432, `aspaDB-old` stopped + intact (old volume = stale 2025-09-05 pre-migration snapshot). PG17 verified unchanged pre/post drill (9 DBs, inventory 73,798 rows) | ✅ | See §A.9 drill notes |
 | A.10 retire old | 2026-08-18 | Manfred/AI | Old PG12.13 reinstated on side port 5435 with original volume for validation → booted clean (11 DBs, en_US.utf8), regression suite 0 ERROR on current-era objects (7 `does not exist` = post-2025-09-05 objects, expected on the stale snapshot); then retired: `docker rm aspaDB-old` + `docker rmi postgres:12.13` (~370MB reclaimed). Only `aspadb` (PG 17.11) on 5432. **Dev upgrade COMPLETE** | ✅ | Report: `workbench/reports/regression/old-pg12-5435-2026-08-18.txt` |
 | *(planned)* B.1 pre-flight backup | | | | | |
-| *(planned)* B.2 new host + Docker pin | | | | | |
+| *(planned)* B.2 in-place OS upgrade (10.13→13.x) + Docker pin | | | | | |
 | *(planned)* B.3 deploy image | | | | | |
 | *(planned)* B.4 side container + locale | | | | | |
 | *(planned)* B.5 restore | | | | | |
@@ -147,7 +149,7 @@ gantt
 | *(planned)* B.7 extensions/config | | | | | |
 | *(planned)* B.8 regression | | | | | |
 | *(planned)* B.9 cutover | | | | | |
-| *(planned)* B.10 quarantine old host | | | | | |
+| *(planned)* B.10 quarantine old container + host snapshot | | | | | |
 
 ---
 
@@ -234,7 +236,7 @@ Phase 3   Full-stack soak + season-readiness (§12)     →  all layers validate
 
 - **Dev Docker host** (192.168.100.32) is already on Debian 13.3 → **no host migration**, only `apt full-upgrade` to 13.6 as housekeeping.
 - **Dev PG container** runs Debian 11.6 (Bullseye) — LTS ends **2026-08-31** → the container **base image must be rebuilt on Debian 13** as part of this upgrade (§8).
-- **Prod Docker host** (172.20.61.220) runs Debian 10.13 (Buster) — **EOL since 2024-06-30** → replaced with a **new Debian 13 host** (§9), not upgraded in place (10→13 is 3 releases; containers make the host disposable).
+- **Prod Docker host** (172.20.61.220) runs Debian 10.13 (Buster) — **EOL since 2024-06-30** → **upgraded in place** to Debian 13.x (Trixie 13.3+) via sequential release upgrades 10→11→12→13 (§9/B.2), with a **host-level snapshot taken first** as the rollback anchor.
 - **Prod PG container** also runs Debian 11.6 (Bullseye) → rebuilt on Debian 13 using the **same image** validated on dev (§9.3).
 
 ### 4.2 Why PostgreSQL 17.11 (not 16, not 18)
@@ -283,6 +285,14 @@ docker info --format '{{.ServerVersion}} | {{.Driver}}'
 ```
 **Dev baseline recorded 2026-08-15:** Docker Engine **29.3.0** (build 5927d80) · Docker Compose **v5.1.0** · Server **29.3.0** · driver **overlay2** · data root `/mnt/docker-data`. Prod must match these exactly (B.2).
 
+**Prod baseline recorded 2026-08-18:** Docker Engine **26.1.4** (build 5650f9b) · Docker Compose **v2.27.0** · Server **26.1.4** · driver **overlay2** · host Debian **10.13** (EOL). ⚠️ **Version mismatch vs dev (29.3.0 / v5.1.0)** — B.2 must upgrade prod's Docker to **29.3.0 / v5.1.0** to match dev (see §7, B.2). Prod container name is **`aspaDB`** (capital DB; dev's is `aspadb` lowercase — mind this for `docker exec`).
+
+**Prod DB size (2026-08-18):** `aspadb` **339 MB** (dev: 255 MB) — restore-time estimate for B.4/B.5.
+
+**Prod container config (2026-08-18, `docker inspect aspaDB`):** image `postgres:12.13` · port **5432:5432** · restart `unless-stopped` · network `iotstack_default` (IP 172.30.4.19, aliases `aspaDB`+`postgres`) · healthcheck `pg_isready -h localhost` · binds: `/var/run/postgresql`, `/root/IOTstack/volumes/postgres/data` → `/var/lib/postgresql/data`, `/mnt/data/aspadata/DB-Backup` → `/mnt/DB-Backup` · env `POSTGRES_USER=postgres`, `PGDATA=/var/lib/postgresql/data`, `LANG=en_US.utf8` · compose project `iotstack` (`/root/IOTstack/docker-compose.yml`, compose v2.27.0). Docker network forced to **172.30.0.0/16** via `/etc/docker/daemon.json` `default-address-pools` (size 24).
+
+**Prod pg_hba.conf (2026-08-18):** `local all all trust`; `host all all 127.0.0.1/32 scram-sha-256`; `host all all 172.20.61.0/24 scram-sha-256` (Margarete Network); `host all all 192.168.1.0/24 scram-sha-256`; `host all all 192.168.61.0/24 scram-sha-256` (aspa VPN); `host all all 172.30.0.0/16 scram-sha-256` (docker network); `host all all all scram-sha-256` (open fallback); replication: `local`/`127.0.0.1`/`::1` trust. ⚠️ Open `all all all` fallback — carry over to the upgraded host only if intended (B.4).
+
 **Known constraints (from project technical domain):**
 - Locale: **en_US.utf8 / libc everywhere** (prod AND dev, all DBs + templates). The old dev cluster was init'd with C.UTF-8, leaving 6 indexes pinned to `COLLATE "C.UTF-8"` (aspadb 2, aspadb-temp 1, aspadb2023 3) — **rebuilt with en_US.utf8 on dev and prod** (2026-08-16). Old dumps still carry the C.UTF-8 refs; `pg_restore.sh` v2.1.0 normalizes them automatically (step [4/5]).
 - Roles: `mkoroschetz` (superuser), `reporter` (read-only), `grafana_user` (monitoring).
@@ -305,7 +315,8 @@ docker info --format '{{.ServerVersion}} | {{.Driver}}'
 | Stale backups (crontab Feb + June) | Restore may be months old | Take a **fresh backup immediately** before upgrade (step A.1 / B.1) |
 | Long downtime on prod | Business impact | Prod is active only Feb–Jun → schedule upgrade in the **off-season** (Jul–Jan); downtime cost ≈ 0 then. Dry-run the restore on dev/temp VM first |
 | Deadline slip past Feb 2027 | Upgrade forced into the active season = real business cost | Front-load Part B in Sep–Oct 2026; leave Oct–Dec as contingency; never touch prod Feb–Jun |
-| Prod host (Debian 10.13) EOL | No security patches on the Docker host itself | Replace with new Debian 13 host (§9), not in-place upgrade |
+| Prod host (Debian 10.13) EOL | No security patches on the Docker host itself | **In-place OS upgrade** to Debian 13.x (§9/B.2) — sequential 10→11→12→13 release upgrades |
+| In-place 3-release OS upgrade (10→13) breaks the host | Host unbootable / Docker daemon fails mid-upgrade | **Host-level snapshot/backup taken BEFORE the upgrade** (LVM snapshot, dd image, or full system rsync — §B.2 precondition); verify it restores; upgrade one release at a time with a reboot + container-health check between steps; STOP + restore snapshot on any failure (§11) |
 | Container base (Debian 11) EOL in both envs | Unpatched CVEs if deferred past 2026-08-31 | Rebuild both containers on Debian 13 (Part A / Part B) |
 | Docker Engine / Compose version drift between dev and prod | Image/compose/naming incompatibilities; dev passes, prod fails | Pin the same Docker Engine + Compose version on both hosts (§5, §7, B.2); upgrade together |
 
@@ -315,12 +326,12 @@ docker info --format '{{.ServerVersion}} | {{.Driver}}'
 
 ```
 DEV:  Docker host Debian 13.3 (no change) ──► rebuild PG container image: Debian 13 + PG 17.11 ──► dump/restore data  [container rebuild]
-PROD: Docker host Debian 10.13 (EOL) ──► NEW Docker host Debian 13 ──► same PG 17.11 image ──► dump/restore data  [new host + container rebuild]
+PROD: Docker host Debian 10.13 (EOL) ──► in-place OS upgrade to Debian 13 (10→11→12→13) + Docker upgrade to 29.3.0/v5.1.0 ──► same PG 17.11 image ──► dump/restore data  [in-place host upgrade + container rebuild]
 ```
 
 **Docker version sync policy (mandatory):**
 1. Record the Docker Engine + Compose version on **both** hosts during inventory (§5). They are the **baseline**.
-2. On the new prod host (B.2), install the **same** Docker Engine + Compose version as dev. If a newer version is required by the fresh install, upgrade dev to match **first**, then rebuild/validate, then deploy to prod. Dev is the pace-setter; prod follows.
+2. On the prod host (B.2), upgrade to the **same** Docker Engine + Compose version as dev. If a newer version is required by the upgrade, upgrade dev to match **first**, then rebuild/validate, then deploy to prod. Dev is the pace-setter; prod follows.
 3. Keep both hosts on the **same pinned version** through the 2–4 week soak (§12). Do not bump one host independently.
 
 ---
@@ -717,9 +728,9 @@ docker rmi <old-image>          # remove Debian-11/PG12 image after confirmed st
 
 ---
 
-## 9. Part B — PROD Upgrade (new Docker host on Debian 13 + rebuilt container + restore)
+## 9. Part B — PROD Upgrade (in-place host OS + Docker upgrade + rebuilt container + restore)
 
-> Prod = **Docker host 172.20.61.220 (Debian 10.13, EOL)** running a **PG container on Debian 11.6 (Bullseye, LTS ends 2026-08-31)** with **PG 12.13**. Host, container base, and PG are all EOL. Because everything runs in containers, the Docker host is **disposable** → build a **new Docker host on Debian 13**, run the **same PG 17 image built and validated on dev (§8)**, and restore the dump. **Schedule this in the off-season (Jul–Jan); prod is active only Feb–Jun, so the maintenance window carries no business cost if done then.** **Each step has a CHECKPOINT — do not advance until it passes.**
+> Prod = **Docker host 172.20.61.220 (Debian 10.13, EOL)** running a **PG container on Debian 11.6 (Bullseye, LTS ends 2026-08-31)** with **PG 12.13**. Host, container base, and PG are all EOL. The host is **upgraded in place** (OS Debian 10.13 → **13.x Trixie 13.3+** via sequential release upgrades + Docker Engine/Compose to **29.3.0 / v5.1.0** matching dev), then run the **same PG 17 image built and validated on dev (§8)**, and restore the dump. A **host-level snapshot is taken before the OS upgrade** (rollback anchor, §B.2/§11). **Schedule this in the off-season (Jul–Jan); prod is active only Feb–Jun, so the maintenance window carries no business cost if done then.** **Each step has a CHECKPOINT — do not advance until it passes.**
 
 ### B.1 — Full pre-flight backup (do NOT skip)
 
@@ -741,25 +752,86 @@ docker ps --filter name=<pg-container>                    # record port mapping 
 
 ✅ **CHECKPOINT B.1:** backup dir dated today with `globals.sql.gz` + `aspadb.custom` non-empty; `--verify` passed; checksums exist **on-host and off-host**; `globals.sql.gz` contains `mkoroschetz`, `reporter`, `grafana_user`; `container-config.json` captured.
 
-### B.2 — Provision new Docker host on Debian 13 (same IP/DNS)
+### B.2 — Upgrade host OS in place (Debian 10.13 → 13.x) + Docker to match dev
 
-- Install Debian 13 (Trixie) minimal server; `apt full-upgrade` to latest point release (13.6+).
-- Install Docker Engine; bring the network/IP and hostname to match old (or update DNS/LB).
-- **Install the SAME Docker Engine + Compose version as dev** (§5 baseline / §7 sync policy). If the fresh Debian 13 host ships a newer Docker, upgrade dev to that version **first**, validate, then match it here — never let prod run a higher Docker version than dev.
-- Apply any host-level tuning carried from old `/etc/sysctl.conf` if the app depends on it.
+> **Strategy (v1.11.3):** the prod host is **upgraded in place**, not replaced. Two
+> upgrades happen here: **(1) OS** Debian 10.13 (Buster, EOL) → **13.x (Trixie
+> 13.3+)** via sequential release upgrades (10→11→12→13 — Debian does not support
+> skipping releases), and **(2) Docker** Engine 26.1.4 / Compose v2.27.0 →
+> **29.3.0 / v5.1.0** to match dev exactly (§5 baseline / §7 sync policy).
+
+**Precondition — host-level snapshot/backup (NEW, mandatory):** the host is no
+longer disposable, so a **full host backup must exist before the OS upgrade**
+(rollback anchor, §11). Take an LVM snapshot, a `dd` image, or a full system
+backup (e.g. `rsync` of `/` + `/boot` + `/etc` + `/var/lib/docker` to external
+storage) and verify it restores. The DB-level backup from B.1 protects the data;
+this protects the **host itself**.
 
 ```bash
+# 0) HOST-LEVEL BACKUP (mandatory precondition — verify it restores!)
+#    LVM snapshot (if the host uses LVM):
+sudo lvcreate -L 20G -s -n root-snap-before-upgrade /dev/<vg>/<lv-root>
+#    or full system rsync to external storage:
+sudo rsync -aAXv --exclude={"/dev/*","/proc/*","/sys/*","/tmp/*","/run/*","/mnt/*","/media/*","/lost+found"} / /mnt/backup/host-2026-08-18/
+#    record current state for post-upgrade comparison:
+cat /etc/debian_version && docker --version && docker compose version
+```
+
+**Step 1 — OS release upgrade 10 → 11 (Bullseye):**
+```bash
+sudo sed -i 's/buster/bullseye/g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null
 sudo apt update && sudo apt full-upgrade -y
-cat /etc/debian_version          # expect 13.x
-# match dev's Docker version exactly (replace X.Y.Z with dev's version from §5)
-sudo apt install -y docker.io=X.Y.Z docker-compose-v2  # or pin via apt-mark hold
+sudo reboot
+cat /etc/debian_version          # expect 11.x
+```
+
+**Step 2 — OS release upgrade 11 → 12 (Bookworm):**
+```bash
+sudo sed -i 's/bullseye/bookworm/g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null
+sudo apt update && sudo apt full-upgrade -y
+sudo reboot
+cat /etc/debian_version          # expect 12.x
+```
+
+**Step 3 — OS release upgrade 12 → 13 (Trixie, 13.3+):**
+```bash
+sudo sed -i 's/bookworm/trixie/g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null
+sudo apt update && sudo apt full-upgrade -y
+sudo reboot
+cat /etc/debian_version          # expect 13.3 or better (13.6+ current)
+```
+
+> **During the OS upgrade:** the `aspaDB` container (restart `unless-stopped`)
+> survives each reboot automatically. Verify it comes back healthy after **each**
+> release step before proceeding to the next: `docker ps` → `aspaDB` Up,
+> `docker exec aspaDB pg_isready -U postgres`. If a step fails → STOP → restore
+> the host snapshot (§11).
+
+**Step 4 — Docker upgrade to match dev (29.3.0 / v5.1.0):**
+```bash
+# Preserve the daemon config FIRST — it forces the 172.30.0.0/16 network pool:
+sudo cp /etc/docker/daemon.json /root/daemon.json.bak-2026-08-18
+# Upgrade Docker Engine + Compose to dev's exact versions (replace X.Y.Z with dev's version from §5)
+sudo apt install -y docker.io=29.3.0 docker-compose-v2=5.1.0   # or pin via apt-mark hold
 sudo systemctl enable --now docker
 # verify sync — must equal dev's output from §5
 docker --version && docker compose version
 docker info --format '{{.ServerVersion}} | {{.Driver}}'
+# confirm the network pool survived the upgrade:
+docker network inspect iotstack_default --format '{{.IPAM.Config}}'
 ```
 
-✅ **CHECKPOINT B.2:** fresh Debian 13 host boots, Docker Engine running, SSH hardening in place, same reachable IP/DNS as before, `debian_version` = 13.x, **Docker Engine + Compose version IDENTICAL to dev** (engine, server version, storage driver).
+> **Docker upgrade note:** if the OS upgrade pulls a newer Docker than dev's
+> pinned version, **upgrade dev to that version first**, validate, then match it
+> here — never let prod run a higher Docker version than dev (§7 sync policy).
+> The `aspaDB` container and its data volume are untouched by the Docker upgrade;
+> only the daemon restarts.
+
+✅ **CHECKPOINT B.2:** host boots on **Debian 13.x (13.3+)**; `aspaDB` container
+healthy on 5432 after every release step; **Docker Engine + Compose version
+IDENTICAL to dev** (engine 29.3.0, server version, storage driver overlay2);
+`/etc/docker/daemon.json` intact (172.30.0.0/16 pool confirmed); host snapshot
+verified restorable.
 
 ### B.3 — Deploy the same PG 17 image (built on dev)
 
@@ -876,10 +948,10 @@ psql -h 172.20.61.220 -p 5434 -U grafana_user -d aspadb -c "SELECT 1;"
 
 ```mermaid
 flowchart TB
-    B1["B.1–B.8 validated on new host :5434"] --> PREP["Point app DATABASE_URL / DNS / LB<br/>at new host :5434 (or remap 5432)"]
+    B1["B.1–B.8 validated on upgraded host :5434"] --> PREP["Point app DATABASE_URL / DNS / LB<br/>at upgraded host :5434 (or remap 5432)"]
     PREP --> STOP["docker stop old pg-container<br/>(do NOT delete)"]
     STOP --> TEST["End-to-end smoke: inventory,<br/>sorting, delivery, sales, CRM"]
-    TEST -->|pass| B10["B.10 Quarantine old host 2–4 wks"]
+    TEST -->|pass| B10["B.10 Quarantine old container + host snapshot 2–4 wks"]
     TEST -->|fail| RB["ROLLBACK §11 — restart old<br/>container, repoint traffic"]
 
     style B10 fill:#1f7a1f,color:#fff
@@ -887,7 +959,7 @@ flowchart TB
 ```
 
 ```bash
-# Update DATABASE_URL in app config / env / DNS / LB to point at new host:5434 (or remap to 5432)
+# Update DATABASE_URL in app config / env / DNS / LB to point at upgraded host:5434 (or remap to 5432)
 # Point the app's other containers at the new PG container (docker network / compose)
 docker stop <pg-container>        # old container stopped — do NOT delete yet
 ```
@@ -910,12 +982,13 @@ docker stop <pg-container>        # old container stopped — do NOT delete yet
 > ```
 > (Details + rationale: §A.9 post-cutover cron note.)
 
-### B.10 — Quarantine old host (retain for rollback window)
+### B.10 — Quarantine old PG container + pre-upgrade host snapshot (retain for rollback window)
 
-- Keep old Debian 10 host **offline but intact** for 2–4 weeks (rollback window, §11).
+- Keep the **old PG 12 container** stopped but intact for 2–4 weeks (rollback window, §11) — it still runs on the upgraded host.
+- Keep the **pre-upgrade host snapshot** (B.2 precondition) for the same window — it is the host-level rollback anchor if the OS/Docker upgrade itself needs reverting.
 - Do **not** purge old backups until post-upgrade soak passes.
 
-✅ **CHECKPOINT B.10:** old host preserved; no scheduled jobs still pointing at it; new host fully authoritative.
+✅ **CHECKPOINT B.10:** old PG container preserved (stopped); pre-upgrade host snapshot retained; no scheduled jobs still pointing at the old container; upgraded host fully authoritative.
 
 ---
 
@@ -932,10 +1005,10 @@ docker stop <pg-container>        # old container stopped — do NOT delete yet
 | 7 | `reporter` read-only SELECT works | ☑ | ☐ |
 | 8 | Row counts match pre-upgrade baseline | ☑ | ☐ |
 | 9 | App smoke tests (inventory/sorting/delivery/sales/CRM) pass | ☑ | ☐ |
-| 10 | Backups running on new schedule (crontab on new prod host) | ☑ | ☐ |
+| 10 | Backups running on new schedule (crontab on upgraded prod host) | ☑ | ☐ |
 | 11 | Monitoring (Grafana/pgagent) reporting | ☐ | ☐ |
 | 12 | **Docker Engine + Compose version identical on dev and prod** (engine, server, storage driver) | ☐ | ☐ |
-| 13 | Old container (dev) / old host (prod) quarantined / dropped (after soak) | ☑ | ☐ |
+| 13 | Old container (dev + prod) quarantined / dropped (after soak); prod host upgraded in place (Debian 13.x) | ☑ | ☐ |
 
 > **Dev note (2026-08-18):** dev crontab updated to the PG17-era **docker-exec
 > form** (all 4 DB jobs run in-container as `postgres`; container name
@@ -965,8 +1038,8 @@ docker stop <pg-container>        # old container stopped — do NOT delete yet
 > the freshest `pg_backup.sh` dump. *(Post-A.10: only restore-based rollback is available.)*
 
 **Prod (B):**
-1. Re-route app/DNS back to the old host (kept intact in B.10) and restart the old PG container.
-2. Old PG 12 container is untouched → start it, business resumes from pre-upgrade state.
+1. **Data rollback:** restart the old PG 12 container (still on the upgraded host, kept intact in B.10) — business resumes from pre-upgrade state.
+2. **Host rollback (only if the OS/Docker upgrade itself failed):** restore the **pre-upgrade host snapshot** taken in B.2 (LVM snapshot / dd image / system rsync) — the host returns to Debian 10.13 + Docker 26.1.4, then restart the old PG container.
 3. Loss window = time between B.1 dump and B.9 cutover → **any writes in that window must be re-entered or reconciled**; keep B.9 cutover as short as possible and do it in the maintenance window.
 4. Investigate root cause; do not re-attempt until fixed (rollback is never a race).
 
@@ -976,7 +1049,7 @@ docker stop <pg-container>        # old container stopped — do NOT delete yet
 
 - **Daily:** `pg_stat_statements` top queries; vacuum/autovacuum activity (`pg_stat_progress_vacuum`); pgagent job success.
 - **Weekly:** `SELECT * FROM pg_stat_activity;` for blocked sessions; check Grafana dashboards for anomaly.
-- **After soak (2–4 wks):** purge old backups, drop old host, update this guide's version header + changelog, and record the decision in `.opencode/context/project-intelligence/decisions-log.md` (template: Context / Decision / Rationale / Alternatives / Impact).
+- **After soak (2–4 wks):** purge old backups, drop the old PG container, release the pre-upgrade host snapshot, update this guide's version header + changelog, and record the decision in `.opencode/context/project-intelligence/decisions-log.md` (template: Context / Decision / Rationale / Alternatives / Impact).
 
 **Seasonal scheduling notes:**
 - Soak window may span the entire off-season (Jul–Jan) if preferred — there is **no rush and no business risk** in extending it, and a long soak (months) on an idle prod is the safest possible validation before the Feb–Jun season.
