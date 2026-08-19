@@ -1,11 +1,18 @@
-## updated 9/1/2025 - MK for modern docker compose
-## updated 8/06/2025 - MK - ok
-## updated 1/27/2025 - MK
-## Testing 8/03/2024 - MK
-## Version 2/05/2024 - migration to aspa v3.1
-## Version 3/10/2023 - migration to aspa v3
-## Tested  3/xx/2023 - MK - ok
-## Based on tested MK - ok - 2/7/2022 for production 2022
+# IOTstack compose stack - production services (aspa frontend manager / balancer, postgres17, apps).
+# **Project**: aspaDB-workbench | **Path**: docker/iotstack/docker-compose.yml
+# **Version**: v4.0.0 | **Last Updated**: 2026-08-19 | **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# ## Changelog
+# - v4.0.0 (2026-08-19): **PG17 migration cutover (A.9)** — postgres:12.13 service replaced by
+#   postgres17 build (image `aspadb-postgres:17` = official postgres:17.11 + pgagent daemon);
+#   container aspaDB→aspadb; env → services/postgres17/; PGDATA → volumes/postgres17/; backup
+#   mount → /mnt/db/IOTstack/DB_Backup; healthcheck pg_isready -h localhost, start_period 20s.
+#   Old postgres block kept commented for rollback (A.9/A.10, docs/CORE-PLATFORM-UPGRADE.md).
+#   Standard header retrofit — legacy ## changelog lines superseded (history preserved below).
+# - v3.1 (2024-02-05): migration to aspa v3.1 [legacy]
+# - v3.0 (2023-03-10): migration to aspa v3 [legacy]
+# - v1.0 (2022-02-07): production baseline (tested config) [legacy]
 
 # adapted from production environment 172.20.61.220 - MK
 # *** https://remote.kellerei-terlan.com:678 -> 172.20.61.220 ***
@@ -397,28 +404,53 @@ services:
       retries: 5
       start_period: 5s
 
-  postgres:
-    image: postgres:12.13  #** ok - 3/10/2023
-    container_name: aspaDB
+  #   postgres:
+  #     image: postgres:12.13  #** ok - 3/10/2023
+  #     container_name: aspaDB
+  #     restart: unless-stopped
+  #     env_file:
+  #       - ./services/postgres/postgres.env
+  #     ports:
+  #       - "5432:5432"
+  #     volumes:
+  #       # PGDATA mapping
+  #       # ./volumes/postgres/data:/var/lib/postgresql/data
+  #       # PGDATA 16
+  #       - ./volumes/postgres/data:/var/lib/postgresql/16/data
+  #       - /mnt/data/aspadata/DB-Backup:/mnt/DB-Backup
+  #       # unix PG socket mapping. Needed to acces psql, pg_dump, pg_dumpall from host
+  #       - /var/run/postgresql:/var/run/postgresql
+  #     healthcheck:
+  #       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} || exit 1"]
+  #       interval: 10s
+  #       timeout: 5s
+  #       retries: 5
+  #       start_period: 10s
+  #
+  postgres17:
+    build:
+      context: ./services/postgres17/.
+      dockerfile: Dockerfile
+    image: aspadb-postgres:17  # official postgres:17.11 + pgagent daemon
+    container_name: aspadb
     restart: unless-stopped
     env_file:
-      - ./services/postgres/postgres.env
+      - ./services/postgres17/postgres.env
+    environment:
+      - PGDATA=/var/lib/postgresql/17/data
     ports:
-      - "5432:5432"
+      - "5432:5432"               # post-cutover port (see A.9 in CORE-PLATFORM-UPGRADE.md)
     volumes:
-      # PGDATA mapping
-      # ./volumes/postgres/data:/var/lib/postgresql/data
-      # PGDATA 16
-      - ./volumes/postgres/data:/var/lib/postgresql/16/data
-      - /mnt/data/aspadata/DB-Backup:/mnt/DB-Backup
-      # unix PG socket mapping. Needed to acces psql, pg_dump, pg_dumpall from host
-      - /var/run/postgresql:/var/run/postgresql
+      - ./volumes/postgres17/data:/var/lib/postgresql/17/data
+      - /mnt/db/IOTstack/DB_Backup:/mnt/DB-Backup
+      # NOT needed drop after testing
+      # - /var/run/postgresql:/var/run/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -h localhost || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 20s
 
   # pgagent:
   #   # ** --> uses pgagent from image postgres:17
