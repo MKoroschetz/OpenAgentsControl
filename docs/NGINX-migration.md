@@ -47,8 +47,8 @@ nginx:
     - ./services/nginx/letsencrypt:/etc/letsencrypt
     - ./services/nginx/nginx.conf:/opt/bitnami/nginx/conf/nginx.conf:ro
     - ./services/nginx/sites-enabled:/opt/bitnami/nginx/conf/server_blocks
-    - /mnt/data/nginx/html:/app
-    - /mnt/data/nginx/log:/opt/bitnami/nginx/logs
+    - ./volumes/nginx/html:/app
+    - ./volumes/nginx/log:/opt/bitnami/nginx/logs
   healthcheck:
     test: ["CMD", "curl", "-f", "-L", "http://localhost/"]
     interval: 30s
@@ -83,15 +83,15 @@ Replace the entire `nginx:` service block in `docker-compose.yml`:
       - ./services/nginx/letsencrypt:/etc/letsencrypt
       # NGINX configuration (standard path - will now work!)
       - ./services/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Shared nginx rules (block user agents, etc.)
+      - ./services/nginx/blockuseragents.rules:/etc/nginx/blockuseragents.rules:ro
       # Site configurations (standard path)
       - ./services/nginx/sites-enabled:/etc/nginx/conf.d:ro
-      # HTML pages for local sites
-      - /mnt/data/nginx/html:/app
-      # LOG configuration (keep existing path)
-      - /mnt/data/nginx/log:/var/log/nginx
-      # Cache and run directories for nginx
-      - /mnt/data/nginx/cache:/var/cache/nginx
-      - /mnt/data/nginx/run:/var/run/nginx
+      # HTML pages for local sites (persistent)
+      - ./volumes/nginx/html:/app
+      # LOG configuration (persistent)
+      - ./volumes/nginx/log:/var/log/nginx
+      # Cache and run directories stay ephemeral (no host mount needed)
     healthcheck:
       test: ["CMD", "curl", "-f", "-L", "http://localhost:8081/"]
       interval: 30s
@@ -176,12 +176,20 @@ http {
 - Removed Bitnami-specific temp path overrides
 - Kept all your gzip, SSL, and tuning settings
 
-### 2. Update `./services/nginx/sites-enabled/aspa-80.conf`
+### 2. Move shared rules file
+
+Move `blockuseragents.rules` from `./services/nginx/sites-enabled/` to `./services/nginx/`:
+
+```bash
+mv ./services/nginx/sites-enabled/blockuseragents.rules ./services/nginx/
+```
+
+### 3. Update `./services/nginx/sites-enabled/aspa-80.conf`
 
 Change the `listen` port from **80** to **8081** (to match docker-compose.yml port mapping):
 
 ```nginx
-include /etc/nginx/conf.d/blockuseragents.rules;
+include /etc/nginx/blockuseragents.rules;
 
 server {
     if ($blockedagent) { return 403; }
@@ -218,9 +226,10 @@ server {
 - `listen 80;` → `listen 8081;` (matches docker-compose.yml `80:8081` mapping)
 - Log paths: `/opt/bitnami/nginx/logs/` → `/var/log/nginx/` (standard)
 
-### 3. Check for other `.conf` files in `./services/nginx/sites-enabled/`
+### 4. Check for other `.conf` files in `./services/nginx/sites-enabled/`
 
 If you have additional `.conf` files (HTTPS config, other sites), update them similarly:
+- Update any `include /etc/nginx/conf.d/blockuseragents.rules;` → `include /etc/nginx/blockuseragents.rules;`
 - Replace all `/opt/bitnami/nginx/logs/` → `/var/log/nginx/`
 - Replace all `/opt/bitnami/nginx/conf/` → `/etc/nginx/conf.d/`
 - Update any `listen` directives to match your desired ports
@@ -231,7 +240,8 @@ If you have additional `.conf` files (HTTPS config, other sites), update them si
 
 - [ ] Backup current `docker-compose.yml`
 - [ ] Backup `./services/nginx/` directory
-- [ ] Backup `/mnt/data/nginx/` directory (logs, HTML)
+- [ ] Backup `./volumes/nginx/` directory (logs, HTML)
+- [ ] Move `blockuseragents.rules` from `./services/nginx/sites-enabled/` to `./services/nginx/`
 - [ ] Verify all `.conf` files in `./services/nginx/sites-enabled/` listed and reviewed
 - [ ] Confirm `./services/nginx/nginx.env` file exists and is readable
 - [ ] Verify Let's Encrypt certs in `./services/nginx/letsencrypt/` are present
@@ -243,20 +253,24 @@ If you have additional `.conf` files (HTTPS config, other sites), update them si
 ### Step 1: Prepare
 
 ```bash
-# Create missing cache/run directories if they don't exist
-mkdir -p /mnt/data/nginx/{cache,run}
+# Create volume directories for logs and HTML
+mkdir -p ./volumes/nginx/{log,html}
+
+# Move blockuseragents.rules to shared location
+mv ./services/nginx/sites-enabled/blockuseragents.rules ./services/nginx/
 
 # Verify files exist
 ls -la ./services/nginx/nginx.conf
+ls -la ./services/nginx/blockuseragents.rules
 ls -la ./services/nginx/sites-enabled/
-ls -la /mnt/data/nginx/
+ls -la ./volumes/nginx/
 ```
 
 ### Step 2: Update Configuration Files
 
 1. **Update `./services/nginx/nginx.conf`** — use content from section above
-2. **Update `./services/nginx/sites-enabled/aspa-80.conf`** — change `listen 80;` to `listen 8081;`
-3. **Review other `.conf` files** in `sites-enabled/` — update paths if necessary
+2. **Update `./services/nginx/sites-enabled/aspa-80.conf`** — change `listen 80;` to `listen 8081;` and update blockuseragents.rules include
+3. **Review other `.conf` files** in `sites-enabled/` — update blockuseragents.rules references and log paths if necessary
 
 ### Step 3: Update docker-compose.yml
 
@@ -317,7 +331,7 @@ curl -L http://localhost/             # Should redirect to HTTPS
 curl -L http://localhost/aspasales    # Should redirect to HTTPS aspasales
 
 # Test logs are being written (now in standard path)
-tail -f /mnt/data/nginx/log/access.log
+tail -f ./volumes/nginx/log/access.log
 
 # Test app mount (if any app files in /mnt/data/nginx/html)
 curl http://localhost:8081/healthz    # or your app health endpoint
@@ -334,6 +348,13 @@ docker rmi bitnami/nginx:latest
 # Verify disk reclaimed
 docker images | grep nginx
 # Should only show "nginx alpine"
+
+# Remove old /mnt/data/nginx if it was previously in use
+# (keeping ./volumes/nginx which is now the source of truth)
+rm -rf /mnt/data/nginx
+
+# Verify new volumes are active and contain logs
+ls -lh ./volumes/nginx/log/
 ```
 
 ---
@@ -409,15 +430,15 @@ docker exec nginx curl -v http://localhost:8081/
 docker logs nginx | tail -20
 ```
 
-### Logs not appearing in `/mnt/data/nginx/log/`
+### Logs not appearing in `./volumes/nginx/log/`
 
 ```bash
 # Verify mount is active
 docker inspect nginx --format='{{json .Mounts}}' | jq '.'
-# Should show: "/mnt/data/nginx/log" mounted to "/var/log/nginx"
+# Should show: "./volumes/nginx/log" mounted to "/var/log/nginx"
 
 # Check permissions on host directory
-ls -ld /mnt/data/nginx/log
+ls -ld ./volumes/nginx/log
 # Should be writable by root (or uid 101 if running as nginx user)
 
 # Check inside container
@@ -462,7 +483,7 @@ docker exec nginx nginx -T 2>&1 | grep -i "successful"
 docker exec nginx curl -f -L http://localhost:8081/
 
 # ✅ Logs are being written to standard path
-ls -lh /mnt/data/nginx/log/access.log /mnt/data/nginx/log/error.log
+ls -lh ./volumes/nginx/log/access.log ./volumes/nginx/log/error.log
 # Both should have recent timestamps
 
 # ✅ HTTPS redirects work

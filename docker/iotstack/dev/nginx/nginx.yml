@@ -27,17 +27,16 @@
     volumes:
       # SSL configuration
       - ./services/nginx/letsencrypt:/etc/letsencrypt
-      # NGINX configuration (standard path - will now work!)
+      # NGINX shared configuration (read-only)
       - ./services/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      # Site configurations (standard path)
+      - ./services/nginx/blockuseragents.rules:/etc/nginx/blockuseragents.rules:ro
+      # Site configurations (read-only)
       - ./services/nginx/sites-enabled:/etc/nginx/conf.d:ro
-      # HTML pages for local sites
-      - /mnt/data/nginx/html:/app
-      # LOG configuration (keep existing path)
-      - /mnt/data/nginx/log:/var/log/nginx
-      # Cache and run directories for nginx
-      - /mnt/data/nginx/cache:/var/cache/nginx
-      - /mnt/data/nginx/run:/var/run/nginx
+      # HTML pages (persistent)
+      - ./volumes/nginx/html:/app
+      # Logs (persistent, for debugging/analysis)
+      - ./volumes/nginx/log:/var/log/nginx
+      # Cache and run stay ephemeral (no host mount)
     healthcheck:
       test: ["CMD", "curl", "-f", "-L", "http://localhost:8081/"]
       interval: 30s

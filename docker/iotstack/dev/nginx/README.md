@@ -1,0 +1,1 @@
+NGINX official container image with a custom configuration for serving static files and reverse proxying requests to a backend application. This image is based on the official NGINX Docker image and includes additional configuration files and scripts to enhance its functionality.
