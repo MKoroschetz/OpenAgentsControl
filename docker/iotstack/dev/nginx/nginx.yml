@@ -1,0 +1,50 @@
+# NGINX service section - BASELINE config captured from dev (bitnami image, deprecated).
+# **Project**: aspaDB-workbench | **Path**: docker/iotstack/dev/nginx/nginx.yml
+# **Version**: v1.0.0 | **Last Updated**: 2026-08-19 | **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# ## Changelog
+# - v1.0.0 (2026-08-19): Baseline - current bitnami/nginx dev service config,
+#   captured pre-migration to be duplicated by the official nginx:alpine container.
+#   DO NOT EDIT - this is the reference baseline for the replacement container.
+
+# NGINX - Bitnami image - deprecated 08/26/2026
+# *** Replace with: official NGINX alpine container
+
+  nginx:
+    # aspa-Frontend Manager / Balancer
+    container_name: nginx
+    image: 'bitnami/nginx:latest'
+    user: "root"
+    restart: unless-stopped
+    environment:
+      DISABLE_IPV6: 'true'
+    env_file:
+      - ./services/nginx/nginx.env
+    ports:
+      - '80:8081'
+      - '678:678'
+      - '443:443'
+    volumes:
+      # SSL configuration
+      - ./services/nginx/letsencrypt:/etc/letsencrypt
+      # NGINX basic config
+      - ./services/nginx/nginx.conf:/opt/bitnami/nginx/conf/nginx.conf:ro
+      # site configurations
+      - ./services/nginx/sites-enabled:/opt/bitnami/nginx/conf/server_blocks
+      # HTML pages for local sites
+      - /mnt/data/nginx/html:/app
+      # LOG configuration
+      - /mnt/data/nginx/log:/opt/bitnami/nginx/logs
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 5
+    #   start_period: 10s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-L", "http://localhost/"]  # -L follows redirects
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
