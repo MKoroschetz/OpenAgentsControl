@@ -1,20 +1,19 @@
-# NGINX service section - BASELINE config captured from dev (bitnami image, deprecated).
+# NGINX service section - nginx:alpine config (replaces deprecated bitnami/nginx baseline).
 # **Project**: aspaDB-workbench | **Path**: docker/iotstack/dev/nginx/nginx.yml
-# **Version**: v1.0.0 | **Last Updated**: 2026-08-19 | **Author**: Manfred Koroschetz/AI
+# **Version**: v2.0.0 | **Last Updated**: 2026-08-19 | **Author**: Manfred Koroschetz/AI
 # **License**: SPDX-License-Identifier: MIT
 #
 # ## Changelog
-# - v1.0.0 (2026-08-19): Baseline - current bitnami/nginx dev service config,
-#   captured pre-migration to be duplicated by the official nginx:alpine container.
-#   DO NOT EDIT - this is the reference baseline for the replacement container.
-
-# NGINX - Bitnami image - deprecated 08/26/2026
-# *** Replace with: official NGINX alpine container
+# - v2.0.0 (2026-08-19): Migrated to official nginx:alpine image (bitnami deprecated).
+#   Standard config paths (/etc/nginx), sites via /etc/nginx/conf.d, logs /var/log/nginx,
+#   cache/run dirs added, healthcheck targets :8081. Bitnami baseline preserved in git
+#   history (v1.0.0, commit 0b1a524).
+# - v1.0.0 (2026-08-19): Baseline - bitnami/nginx dev service config (deprecated).
 
   nginx:
     # aspa-Frontend Manager / Balancer
     container_name: nginx
-    image: 'bitnami/nginx:latest'
+    image: 'nginx:alpine'
     user: "root"
     restart: unless-stopped
     environment:
@@ -22,28 +21,25 @@
     env_file:
       - ./services/nginx/nginx.env
     ports:
-      - '80:8081'
-      - '678:678'
-      - '443:443'
+      - '80:8081'      # Keep: host 80 → container 8081
+      - '678:678'      # Keep: custom HTTPS port
+      - '443:443'      # Keep: standard HTTPS
     volumes:
       # SSL configuration
       - ./services/nginx/letsencrypt:/etc/letsencrypt
-      # NGINX basic config
-      - ./services/nginx/nginx.conf:/opt/bitnami/nginx/conf/nginx.conf:ro
-      # site configurations
-      - ./services/nginx/sites-enabled:/opt/bitnami/nginx/conf/server_blocks
+      # NGINX configuration (standard path - will now work!)
+      - ./services/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Site configurations (standard path)
+      - ./services/nginx/sites-enabled:/etc/nginx/conf.d:ro
       # HTML pages for local sites
       - /mnt/data/nginx/html:/app
-      # LOG configuration
-      - /mnt/data/nginx/log:/opt/bitnami/nginx/logs
-    # healthcheck:
-    #   test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
-    #   interval: 10s
-    #   timeout: 5s
-    #   retries: 5
-    #   start_period: 10s
+      # LOG configuration (keep existing path)
+      - /mnt/data/nginx/log:/var/log/nginx
+      # Cache and run directories for nginx
+      - /mnt/data/nginx/cache:/var/cache/nginx
+      - /mnt/data/nginx/run:/var/run/nginx
     healthcheck:
-      test: ["CMD", "curl", "-f", "-L", "http://localhost/"]  # -L follows redirects
+      test: ["CMD", "curl", "-f", "-L", "http://localhost:8081/"]
       interval: 30s
       timeout: 10s
       retries: 3
