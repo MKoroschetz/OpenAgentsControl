@@ -1,10 +1,16 @@
 # NGINX: Bitnami → nginx:alpine Migration Guide
 **Project**: aspaDB-workbench | **Path**: docs/NGINX-migration.md
-**Version**: v1.0.0 | **Last Updated**: 2026-08-19
+**Version**: v1.1.0 | **Last Updated**: 2026-08-19
 **Author**: Manfred Koroschetz/AI
 **License**: SPDX-License-Identifier: MIT
 
 ## Changelog
+- v1.1.0 (2026-08-19): Aligned guide with the committed nginx:alpine config set
+  (docker/iotstack/dev/nginx/, commit 23c5f85): volumes use /mnt/data/nginx
+  (html/log/cache/run), not ./volumes/nginx; blockuseragents.rules stays in
+  sites-enabled (included via /etc/nginx/conf.d/); site file renamed aspa-80.conf →
+  aspa-8081.conf; added aspa-443.conf + aspa-678.conf coverage; bitnami baseline
+  block corrected to match committed v1.0.0.
 - v1.0.0 (2026-08-19): Initial migration guide - Bitnami nginx → official nginx:alpine
 
 **Status**: Ready to execute  
@@ -47,8 +53,8 @@ nginx:
     - ./services/nginx/letsencrypt:/etc/letsencrypt
     - ./services/nginx/nginx.conf:/opt/bitnami/nginx/conf/nginx.conf:ro
     - ./services/nginx/sites-enabled:/opt/bitnami/nginx/conf/server_blocks
-    - ./volumes/nginx/html:/app
-    - ./volumes/nginx/log:/opt/bitnami/nginx/logs
+    - /mnt/data/nginx/html:/app
+    - /mnt/data/nginx/log:/opt/bitnami/nginx/logs
   healthcheck:
     test: ["CMD", "curl", "-f", "-L", "http://localhost/"]
     interval: 30s
@@ -61,6 +67,8 @@ nginx:
 
 ## New Configuration (nginx:alpine)
 
+The complete config set is committed at `docker/iotstack/dev/nginx/` (`nginx.yml`,
+`nginx.conf`, `aspa-8081.conf`, `aspa-443.conf`, `aspa-678.conf` — commit `23c5f85`).
 Replace the entire `nginx:` service block in `docker-compose.yml`:
 
 ```yaml
@@ -83,15 +91,15 @@ Replace the entire `nginx:` service block in `docker-compose.yml`:
       - ./services/nginx/letsencrypt:/etc/letsencrypt
       # NGINX configuration (standard path - will now work!)
       - ./services/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      # Shared nginx rules (block user agents, etc.)
-      - ./services/nginx/blockuseragents.rules:/etc/nginx/blockuseragents.rules:ro
-      # Site configurations (standard path)
+      # Site configurations (standard path) - incl. blockuseragents.rules
       - ./services/nginx/sites-enabled:/etc/nginx/conf.d:ro
-      # HTML pages for local sites (persistent)
-      - ./volumes/nginx/html:/app
-      # LOG configuration (persistent)
-      - ./volumes/nginx/log:/var/log/nginx
-      # Cache and run directories stay ephemeral (no host mount needed)
+      # HTML pages for local sites
+      - /mnt/data/nginx/html:/app
+      # LOG configuration (keep existing path)
+      - /mnt/data/nginx/log:/var/log/nginx
+      # Cache and run directories for nginx
+      - /mnt/data/nginx/cache:/var/cache/nginx
+      - /mnt/data/nginx/run:/var/run/nginx
     healthcheck:
       test: ["CMD", "curl", "-f", "-L", "http://localhost:8081/"]
       interval: 30s
@@ -176,26 +184,25 @@ http {
 - Removed Bitnami-specific temp path overrides
 - Kept all your gzip, SSL, and tuning settings
 
-### 2. Move shared rules file
+### 2. Shared rules file (blockuseragents.rules)
 
-Move `blockuseragents.rules` from `./services/nginx/sites-enabled/` to `./services/nginx/`:
+`blockuseragents.rules` **stays in `./services/nginx/sites-enabled/`** — the whole
+directory is mounted to `/etc/nginx/conf.d`, so all three site configs include it as
+`/etc/nginx/conf.d/blockuseragents.rules`. No move needed.
 
-```bash
-mv ./services/nginx/sites-enabled/blockuseragents.rules ./services/nginx/
-```
+### 3. Update `./services/nginx/sites-enabled/aspa-8081.conf`
 
-### 3. Update `./services/nginx/sites-enabled/aspa-80.conf`
-
-Change the `listen` port from **80** to **8081** (to match docker-compose.yml port mapping):
+The HTTP listener is committed as **`aspa-8081.conf`** (renamed from `aspa-80.conf`),
+`listen` changed from **80** to **8081** to match the docker-compose.yml `80:8081` mapping:
 
 ```nginx
-include /etc/nginx/blockuseragents.rules;
+include /etc/nginx/conf.d/blockuseragents.rules;
 
 server {
     if ($blockedagent) { return 403; }
     if ($request_method !~ ^(GET|HEAD|POST)$) { return 444; }
 
-    listen 8081;  # ← CHANGED from 80 to 8081 (matches container port)
+    listen 8081;  # matches container port (host 80 → container 8081)
     server_name _;
     server_tokens off;
 
@@ -225,14 +232,19 @@ server {
 **What changed:**
 - `listen 80;` → `listen 8081;` (matches docker-compose.yml `80:8081` mapping)
 - Log paths: `/opt/bitnami/nginx/logs/` → `/var/log/nginx/` (standard)
+- `include` path: `/etc/nginx/conf.d/blockuseragents.rules` (file stays in sites-enabled)
 
-### 4. Check for other `.conf` files in `./services/nginx/sites-enabled/`
+### 4. HTTPS site configs — `aspa-443.conf` and `aspa-678.conf`
 
-If you have additional `.conf` files (HTTPS config, other sites), update them similarly:
-- Update any `include /etc/nginx/conf.d/blockuseragents.rules;` → `include /etc/nginx/blockuseragents.rules;`
+The two HTTPS listeners are committed as **`aspa-443.conf`** (port 443) and
+**`aspa-678.conf`** (port 678, main app proxy). Both were updated similarly:
+- `include /etc/nginx/conf.d/blockuseragents.rules;` (unchanged — file stays in sites-enabled)
 - Replace all `/opt/bitnami/nginx/logs/` → `/var/log/nginx/`
 - Replace all `/opt/bitnami/nginx/conf/` → `/etc/nginx/conf.d/`
-- Update any `listen` directives to match your desired ports
+- `listen 443 ssl;` / `listen 678 ssl;` with `http2 on;` (unchanged)
+- Let's Encrypt certs: `greentech.consulting` (fullchain/privkey/chain) + `options-ssl-nginx.conf` + `ssl-dhparams.pem`
+- `aspa-678.conf` keeps the Vouch auth (`/vouch-validate`, `@error401`) and all app proxies
+  (`aspa_APP`, `aspaFLOWS_API`, `aspaAUTH`, `aspa-login`, `aspaSTOCK`, `aspaSALES`, CRM, cams, kkr)
 
 ---
 
@@ -240,8 +252,7 @@ If you have additional `.conf` files (HTTPS config, other sites), update them si
 
 - [ ] Backup current `docker-compose.yml`
 - [ ] Backup `./services/nginx/` directory
-- [ ] Backup `./volumes/nginx/` directory (logs, HTML)
-- [ ] Move `blockuseragents.rules` from `./services/nginx/sites-enabled/` to `./services/nginx/`
+- [ ] Backup `/mnt/data/nginx/` directory (logs, HTML, cache, run)
 - [ ] Verify all `.conf` files in `./services/nginx/sites-enabled/` listed and reviewed
 - [ ] Confirm `./services/nginx/nginx.env` file exists and is readable
 - [ ] Verify Let's Encrypt certs in `./services/nginx/letsencrypt/` are present
@@ -253,24 +264,20 @@ If you have additional `.conf` files (HTTPS config, other sites), update them si
 ### Step 1: Prepare
 
 ```bash
-# Create volume directories for logs and HTML
-mkdir -p ./volumes/nginx/{log,html}
-
-# Move blockuseragents.rules to shared location
-mv ./services/nginx/sites-enabled/blockuseragents.rules ./services/nginx/
+# Create persistent directories (logs, HTML, cache, run)
+mkdir -p /mnt/data/nginx/{log,html,cache,run}
 
 # Verify files exist
 ls -la ./services/nginx/nginx.conf
-ls -la ./services/nginx/blockuseragents.rules
 ls -la ./services/nginx/sites-enabled/
-ls -la ./volumes/nginx/
+ls -la /mnt/data/nginx/
 ```
 
 ### Step 2: Update Configuration Files
 
 1. **Update `./services/nginx/nginx.conf`** — use content from section above
-2. **Update `./services/nginx/sites-enabled/aspa-80.conf`** — change `listen 80;` to `listen 8081;` and update blockuseragents.rules include
-3. **Review other `.conf` files** in `sites-enabled/` — update blockuseragents.rules references and log paths if necessary
+2. **Update `./services/nginx/sites-enabled/aspa-8081.conf`** — `listen 8081;` (matches `80:8081` mapping)
+3. **Review `aspa-443.conf` / `aspa-678.conf`** — log paths already standard (`/var/log/nginx`); keep `include /etc/nginx/conf.d/blockuseragents.rules;`
 
 ### Step 3: Update docker-compose.yml
 
@@ -331,7 +338,7 @@ curl -L http://localhost/             # Should redirect to HTTPS
 curl -L http://localhost/aspasales    # Should redirect to HTTPS aspasales
 
 # Test logs are being written (now in standard path)
-tail -f ./volumes/nginx/log/access.log
+tail -f /mnt/data/nginx/log/access.log
 
 # Test app mount (if any app files in /mnt/data/nginx/html)
 curl http://localhost:8081/healthz    # or your app health endpoint
@@ -349,12 +356,9 @@ docker rmi bitnami/nginx:latest
 docker images | grep nginx
 # Should only show "nginx alpine"
 
-# Remove old /mnt/data/nginx if it was previously in use
-# (keeping ./volumes/nginx which is now the source of truth)
-rm -rf /mnt/data/nginx
-
-# Verify new volumes are active and contain logs
-ls -lh ./volumes/nginx/log/
+# /mnt/data/nginx is the persistent data location (html/log/cache/run) — keep it.
+# Verify logs are being written
+ls -lh /mnt/data/nginx/log/
 ```
 
 ---
@@ -430,15 +434,15 @@ docker exec nginx curl -v http://localhost:8081/
 docker logs nginx | tail -20
 ```
 
-### Logs not appearing in `./volumes/nginx/log/`
+### Logs not appearing in `/mnt/data/nginx/log/`
 
 ```bash
 # Verify mount is active
 docker inspect nginx --format='{{json .Mounts}}' | jq '.'
-# Should show: "./volumes/nginx/log" mounted to "/var/log/nginx"
+# Should show: "/mnt/data/nginx/log" mounted to "/var/log/nginx"
 
 # Check permissions on host directory
-ls -ld ./volumes/nginx/log
+ls -ld /mnt/data/nginx/log
 # Should be writable by root (or uid 101 if running as nginx user)
 
 # Check inside container
@@ -451,7 +455,7 @@ docker exec nginx ls -la /var/log/nginx/
 ```bash
 # Verify sites config is mounted
 docker exec nginx ls -la /etc/nginx/conf.d/
-# Should show: aspa-80.conf, blockuseragents.rules, etc.
+# Should show: aspa-8081.conf, aspa-443.conf, aspa-678.conf, blockuseragents.rules, etc.
 
 # Test nginx config includes
 docker exec nginx nginx -T
@@ -483,7 +487,7 @@ docker exec nginx nginx -T 2>&1 | grep -i "successful"
 docker exec nginx curl -f -L http://localhost:8081/
 
 # ✅ Logs are being written to standard path
-ls -lh ./volumes/nginx/log/access.log ./volumes/nginx/log/error.log
+ls -lh /mnt/data/nginx/log/access.log /mnt/data/nginx/log/error.log
 # Both should have recent timestamps
 
 # ✅ HTTPS redirects work
@@ -520,7 +524,7 @@ docker exec nginx ls -la /app
 
 ---
 
-**Document Version**: v1.0.0  
+**Document Version**: v1.1.0  
 **Last Updated**: 2026-08-19  
 **Status**: Ready to execute  
 **Author**: Manfred Koroschetz/AI
