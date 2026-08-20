@@ -1,0 +1,19 @@
+# blockuseragents.rules - shared user-agent blocklist map, included once from nginx.conf's http{} block.
+# **Project**: aspaDB-workbench | **Path**: docker/iotstack/dev/nginx/blockuseragents.rules
+# **Version**: v1.0.0 | **Last Updated**: 2026-08-19 | **Author**: Manfred Koroschetz/AI
+# **License**: SPDX-License-Identifier: MIT
+#
+# ## Changelog
+# - v1.0.0 (2026-08-19): Initial blocklist, carried over from the Bitnami baseline.
+#   Do not `include` this from individual aspa-*.conf site files — conf.d/*.conf loads
+#   them all into the same http context, so a second include redeclares the `map`
+#   block and nginx refuses to start. See nginx.conf v1.1.0.
+
+map $http_user_agent $blockedagent {
+        default         0;
+        ~*malicious     1;
+        ~*bot           1;
+        ~*backdoor      1;
+        ~*crawler       1;
+        ~*bandit        1;
+}

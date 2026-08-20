@@ -235,3 +235,13 @@ aspaDB-dev
 aspaDB-dev.pub
 id_mk_rsa
 id_mk_rsa.pub
+
+# TLS private keys and Let's Encrypt material - NEVER commit
+# Live certs are synced host-to-host directly (see docker/iotstack/dev/nginx/scripts/
+# sync-greentech-cert.sh) and belong on the target host's disk only, not in git. This
+# guards against accidental staging under docker/iotstack/services/nginx/letsencrypt/
+# or anywhere else in the tree.
+*.pem
+*.key
+privkey*
+fullchain*

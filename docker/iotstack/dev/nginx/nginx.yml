@@ -4,6 +4,11 @@
 # **License**: SPDX-License-Identifier: MIT
 #
 # ## Changelog
+# - v2.1.0 (2026-08-19): Dropped `-L` from the healthcheck. aspa-8081.conf's `/`
+#   location returns a 301 to an external absolute URL (https://dev.greentech...:678);
+#   `curl -L` chased that redirect out of the container on every check and hung past
+#   the 10s timeout, marking the container "unhealthy" even though nginx itself was
+#   answering instantly. `curl -f` alone already treats a 301 as a pass.
 # - v2.0.0 (2026-08-19): Migrated to official nginx:alpine image (bitnami deprecated).
 #   Standard config paths (/etc/nginx), sites via /etc/nginx/conf.d, logs /var/log/nginx,
 #   cache/run dirs added, healthcheck targets :8081. Bitnami baseline preserved in git
@@ -38,7 +43,7 @@
       - ./volumes/nginx/log:/var/log/nginx
       # Cache and run stay ephemeral (no host mount)
     healthcheck:
-      test: ["CMD", "curl", "-f", "-L", "http://localhost:8081/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8081/"]
       interval: 30s
       timeout: 10s
       retries: 3

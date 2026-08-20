@@ -1,11 +1,21 @@
 # PostgreSQL 12.13 → 17.11 Upgrade Guide (Debian 10/13 → Debian 13)
 
 **Project**: aspaDB-workbench | **Path**: docs/CORE-PLATFORM-UPGRADE.md
-**Version**: v1.11.3 | **Last Updated**: 2026-08-18
+**Version**: v1.11.4 | **Last Updated**: 2026-08-19
 **Author**: Manfred Koroschetz/AI
 **License**: SPDX-License-Identifier: MIT
 
 ## Changelog
+- v1.11.4 (2026-08-19): **IPv6 daemon-wide disable folded into B.2 Step 4.** User
+  wants IPv6 disabled host-wide, surfaced while diagnosing an unrelated nginx
+  healthcheck bug (docs/NGINX-migration.md v1.3.0 — Docker was found publishing every
+  service's ports on both `0.0.0.0` and `[::]`, its default behavior, unconnected to
+  that bug's actual cause). Rather than a standalone change, `"ipv6": false` is added
+  to `/etc/docker/daemon.json` in B.2 Step 4, since that step already backs up and
+  restarts the daemon in the same off-season maintenance window — avoids a second
+  unplanned daemon restart on prod. Apply to dev first and validate before prod
+  (host-wide, not per-service). CHECKPOINT B.2 updated to verify no `[::]`-bound
+  ports remain.
 - v1.11.3 (2026-08-18): **Phase 2 strategy change — prod host upgraded IN PLACE, not replaced.** Per user decision (A1 note), Part B no longer provisions a **new Docker host**; the existing prod host (172.20.61.220) is upgraded **in place**: (1) **OS upgrade** Debian 10.13 → 13.x (Trixie 13.3+, sequential 10→11→12→13 release upgrades) and (2) **Docker upgrade** 26.1.4/v2.27.0 → **29.3.0/v5.1.0** to match dev exactly (§7 sync policy). B.2 rewritten accordingly with a new **host-level snapshot/backup precondition** (the rollback anchor, since the host is no longer disposable); B.10 redefined as quarantine of the **old PG container + pre-upgrade host snapshot**; §1/§2/§4.1/§5/§6/§7/§9/§10/§11/§12 updated for consistency; new §6 risk row for the in-place 3-release OS upgrade. Container rebuild + dump/restore strategy unchanged.
 - v1.11.2 (2026-08-18): **Prod inventory + baseline recorded (§5) — Phase 0 ✅ complete.** Captured on prod host (172.20.61.220): Docker Engine **26.1.4** (build 5650f9b) · Compose **v2.27.0** · driver **overlay2** · host Debian **10.13** (EOL); `aspadb` DB size **339 MB** (dev: 255 MB); container config via `docker inspect aspaDB` (postgres:12.13, 5432:5432, unless-stopped, iotstack_default 172.30.4.19, binds incl. `/mnt/data/aspadata/DB-Backup` → `/mnt/DB-Backup`); pg_hba.conf (scram-sha-256 for 172.20.61.0/24, 192.168.1.0/24, 192.168.61.0/24, 172.30.0.0/16 + open `all all all` fallback; replication trust on localhost). ⚠️ **Docker version mismatch recorded: prod 26.1.4/v2.27.0 vs dev 29.3.0/v5.1.0 — B.2 must pin the new prod host to 29.3.0/v5.1.0.** Prod container name is `aspaDB` (capital DB) vs dev `aspadb` lowercase. Milestone actuals filled: §5 inventory 2026-08-18, A.9 cutover 2026-08-17, A.10 retire 2026-08-18.
 - v1.11.1 (2026-08-18): **Dev crontab fixed for the PG17 era** (follow-up to A.10). The dev crontab still ran the old host-side backup entries (`/mnt/data/aspadata/DB-Backup/*.sh`), which can no longer reach the DB — the postgres17 container has no host socket mount. Applied the A.9 post-cutover cron change: all 4 DB jobs now run **in-container** via `docker exec -u postgres aspadb /mnt/DB-Backup/<script>` (container name is `aspadb` lowercase — the doc's earlier `aspaDB`/`postgres17` examples were wrong and would not resolve). Prerequisites discovered + fixed: (1) the backup tooling (scripts + `pg_backup.config` + `.pgpass`) must live in the **container-mounted** dir (host `<IOTstack>/DB_Backup` → in-container `/mnt/DB-Backup`) — copied there; (2) the mounted dir + `log/` + `.pgpass` must be writable by the container `postgres` user (UID 999) — chowned; (3) `pg_backup.config` `DOCKER_COMPOSE_DIR` must point at the in-container path `/mnt/DB-Backup/` with a synced `docker-compose.yml` (the live compose under `/root/IOTstack/` is unreachable in-container, `/root` is 700) — updated + synced. **All 4 cron scripts verified in-container (exit 0)**: pg_maintenance (ANALYZE+VACUUM all 9 DBs), pg_backup (full cluster, plain+custom+globals+configs+compose snapshot), pg_backup_rotated, aspa_IngresCleanup. Script headers updated (pg_maintenance v1.2.1, pg_backup v1.6.2, pg_backup_rotated v1.1.1, aspa_IngresCleanup v1.1.1) and re-deployed to both host dirs. Validation matrix row 10 dev → ☑. **Part B (prod) must apply the same cron change at B.9** — see §B.9 note.
@@ -811,6 +821,12 @@ cat /etc/debian_version          # expect 13.3 or better (13.6+ current)
 ```bash
 # Preserve the daemon config FIRST — it forces the 172.30.0.0/16 network pool:
 sudo cp /etc/docker/daemon.json /root/daemon.json.bak-2026-08-18
+# While the daemon is already being restarted this window, disable IPv6 host-wide
+# (host has no IPv6 requirement; every service currently publishes on both 0.0.0.0
+# and [::] by Docker's default — see docs/NGINX-migration.md v1.3.0 troubleshooting):
+#   add/merge into /etc/docker/daemon.json: {"ipv6": false}
+#   (merge with jq -s '.[0] * .[1]' if the file has other keys — do NOT clobber
+#   the existing default-address-pools block)
 # Upgrade Docker Engine + Compose to dev's exact versions (replace X.Y.Z with dev's version from §5)
 sudo apt install -y docker.io=29.3.0 docker-compose-v2=5.1.0   # or pin via apt-mark hold
 sudo systemctl enable --now docker
@@ -819,19 +835,23 @@ docker --version && docker compose version
 docker info --format '{{.ServerVersion}} | {{.Driver}}'
 # confirm the network pool survived the upgrade:
 docker network inspect iotstack_default --format '{{.IPAM.Config}}'
+# confirm IPv6 publishing is gone (no "[::]" entries expected):
+docker ps --format '{{.Names}}: {{.Ports}}'
 ```
 
 > **Docker upgrade note:** if the OS upgrade pulls a newer Docker than dev's
 > pinned version, **upgrade dev to that version first**, validate, then match it
 > here — never let prod run a higher Docker version than dev (§7 sync policy).
 > The `aspaDB` container and its data volume are untouched by the Docker upgrade;
-> only the daemon restarts.
+> only the daemon restarts. The `ipv6: false` daemon setting is host-wide — apply
+> it to dev first (§5) and confirm nothing regresses before matching it here.
 
 ✅ **CHECKPOINT B.2:** host boots on **Debian 13.x (13.3+)**; `aspaDB` container
 healthy on 5432 after every release step; **Docker Engine + Compose version
 IDENTICAL to dev** (engine 29.3.0, server version, storage driver overlay2);
-`/etc/docker/daemon.json` intact (172.30.0.0/16 pool confirmed); host snapshot
-verified restorable.
+`/etc/docker/daemon.json` intact (172.30.0.0/16 pool confirmed) **and** carries
+`"ipv6": false`; `docker ps` shows no `[::]`-bound ports on any service; host
+snapshot verified restorable.
 
 ### B.3 — Deploy the same PG 17 image (built on dev)
 

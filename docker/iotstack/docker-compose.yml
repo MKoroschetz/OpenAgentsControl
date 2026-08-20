@@ -495,10 +495,50 @@ services:
   #   #   timeout: 5s
   #   #   retries: 5
   #   #   start_period: 10s
+  # DEPRECATED NGINX bitnami container
+  # nginx:
+  #   # aspa-Frontend Manager / Balancer
+  #   container_name: nginx
+  #   image: 'bitnami/nginx:latest'
+  #   user: "root"
+  #   restart: unless-stopped
+  #   environment:
+  #     DISABLE_IPV6: 'true'
+  #   env_file:
+  #     - ./services/nginx/nginx.env
+  #   ports:
+  #     - '80:8081'
+  #     - '678:678'
+  #     - '443:443'
+  #   volumes:
+  #     # SSL configuration
+  #     - ./services/nginx/letsencrypt:/etc/letsencrypt
+  #     # NGINX basic config
+  #     - ./services/nginx/nginx.conf:/opt/bitnami/nginx/conf/nginx.conf:ro
+  #     # site configurations
+  #     - ./services/nginx/sites-enabled:/opt/bitnami/nginx/conf/server_blocks
+  #     # HTML pages for local sites
+  #     - /mnt/data/nginx/html:/app
+  #     # LOG configuration
+  #     - /mnt/data/nginx/log:/opt/bitnami/nginx/logs
+  #   # healthcheck:
+  #   #   test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+  #   #   interval: 10s
+  #   #   timeout: 5s
+  #   #   retries: 5
+  #   #   start_period: 10s
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "-L", "http://localhost/"]  # -L follows redirects
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 40s
+
+  # Official NGINX container - adopted going forwards
   nginx:
     # aspa-Frontend Manager / Balancer
     container_name: nginx
-    image: 'bitnami/nginx:latest'
+    image: 'nginx:alpine'
     user: "root"
     restart: unless-stopped
     environment:
@@ -506,26 +546,28 @@ services:
     env_file:
       - ./services/nginx/nginx.env
     ports:
-      - '80:8081'
-      - '678:678'
-      - '443:443'
+      - '80:8081'      # Keep: host 80 → container 8081
+      - '678:678'      # Keep: custom HTTPS port
+      - '443:443'      # Keep: standard HTTPS
     volumes:
       # SSL configuration
       - ./services/nginx/letsencrypt:/etc/letsencrypt
-      # NGINX basic config
-      #- ./services/nginx/nginx.conf:/opt/bitnami/nginx/conf/nginx.conf:ro
-      # site configurations
-      - ./services/nginx/sites-enabled:/opt/bitnami/nginx/conf/server_blocks
-      # HTML pages for local sites
-      - /mnt/data/nginx/html:/app
-      # LOG configuration
-      - /mnt/data/nginx/log:/opt/bitnami/nginx/logs
+      # NGINX shared configuration (read-only)
+      - ./services/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./services/nginx/blockuseragents.rules:/etc/nginx/blockuseragents.rules:ro
+      # Site configurations (read-only)
+      - ./services/nginx/sites-enabled:/etc/nginx/conf.d:ro
+      # HTML pages (persistent)
+      - ./volumes/nginx/html:/app
+      # Logs (persistent, for debugging/analysis)
+      - ./volumes/nginx/log:/var/log/nginx
+      # Cache and run stay ephemeral (no host mount)
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8081/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:8081/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 #   mariadb:
 #     container_name: mariadb
