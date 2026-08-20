@@ -3,6 +3,11 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+## [0.7.2] - 2026-08-20
+
+### Changes
+- fix(infra): sync nginx with dev, renew cert, automate renewal
+
 ## [0.7.1] - 2026-01-30
 
 ### Changes
